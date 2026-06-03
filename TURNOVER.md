@@ -197,23 +197,28 @@ Created by `php artisan db:seed`. **Change passwords after first login** in prod
 
 ---
 
-## 10) Startup Scripts (`scripts\`)
+## 10) Scripts (`scripts\`)
 
-| File | Purpose |
+| Path | Purpose |
 |------|---------|
-| `start-cpdo-system.bat` | Starts API (8000) + app (9000), opens browser |
-| `_start-laravel.bat` | Laravel only |
-| `_start-client.bat` | Frontend only |
-| `register-autostart.ps1` | Shortcut in Windows Startup (runs on user log in) |
-| `unregister-autostart.ps1` | Removes Startup shortcut |
+| `For Opening the System\start-cpdo-system.bat` | Starts API (8000) + app (9000), opens browser |
+| `For Opening the System\_start-laravel.bat` | Laravel only |
+| `For Opening the System\_start-client.bat` | Frontend only |
+| `For Opening the System\register-autostart.ps1` | Startup shortcut (runs on user log in) |
+| `For Opening the System\unregister-autostart.ps1` | Removes Startup shortcut |
+| `Export\export-sync-package.bat` | **Office PC:** dump DB + PDFs to USB |
+| `Import\import-sync-package.bat` | **DH laptop:** load USB package into local app |
+| `sync-config.example.ps1` | Copy to `sync-config.ps1` (see §12.5) |
+| `sync-common.ps1` | Shared helpers (do not run directly) |
+| `register-monthly-export.ps1` | **Office PC:** optional scheduled export |
 
-**Prerequisites before using scripts:** PostgreSQL running; `php` and `npm` on PATH (or edit the `_start-*.bat` files with full paths).
+**Prerequisites:** PostgreSQL running; `php` and `npm` on PATH (or edit `_start-*.bat` with full paths).
 
 ### Manual test
 
 Double-click:
 
-`C:\Apps\cpdo-zoning-management-system\scripts\start-cpdo-system.bat`
+`C:\Apps\cpdo-zoning-management-system\scripts\For Opening the System\start-cpdo-system.bat`
 
 Expected:
 
@@ -223,7 +228,7 @@ Expected:
 ### Auto-start on login (run once)
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "C:\Apps\cpdo-zoning-management-system\scripts\register-autostart.ps1"
+powershell -ExecutionPolicy Bypass -File "C:\Apps\cpdo-zoning-management-system\scripts\For Opening the System\register-autostart.ps1"
 ```
 
 If the project folder moves, run `register-autostart.ps1` again.
@@ -261,6 +266,118 @@ Retention: at least 30 days; keep one copy off the PC (external drive/NAS).
 
 ---
 
+## 12.5) Sync Office PC → Department Head Laptop
+
+Use this when **both PCs already have the app installed**, but only the **office PC** has live data. The Department Head (DH) laptop gets a **snapshot** (not live over the network). Each export/import cycle copies the database and all PDF attachments.
+
+### How it works
+
+```text
+Office PC                              USB (e.g. E:\cpdo-sync)              DH laptop
+─────────                              ───────────────────────              ─────────
+Daily use → localhost:9000           package\                             After import → localhost:9000
+       │                               ├─ server.backup                     (same logins as office)
+       │  Export\export-sync-package.bat ├─ documents\
+       └──────────────────────────────►└─ MANIFEST.json ──► Import\import-sync-package.bat
+```
+
+**Office PC = source of truth.** Edits on the DH laptop stay on his laptop unless you deliberately export from his PC back to the office (not recommended).
+
+---
+
+### One-time setup (both PCs)
+
+1. Pull latest code from GitHub (`git pull`) so `scripts\Export\`, `scripts\Import\`, and `scripts\sync-common.ps1` exist.
+2. On **each** PC, create local config (this file is **not** in GitHub):
+
+```powershell
+cd C:\Apps\cpdo-zoning-management-system\scripts
+copy sync-config.example.ps1 sync-config.ps1
+notepad sync-config.ps1
+```
+
+3. Set `$SyncFolder` to where the USB package lives, for example:
+
+```powershell
+$SyncFolder = "E:\cpdo-sync"
+```
+
+- **Office PC:** create only `E:\cpdo-sync` on the USB. The export script creates `E:\cpdo-sync\package\` automatically.
+- **DH laptop:** use the **same drive letter** if he plugs in the same USB (`E:\cpdo-sync`). If he copies the folder to disk, set `$SyncFolder` to that path (e.g. `D:\cpdo-sync`).
+4. Both PCs need `server\.env` with the same PostgreSQL **username and password** (database name `server`).
+
+---
+
+### Office PC — export (coworker)
+
+**When:** Monthly, or whenever the DH wants fresh data.
+
+| Step | Action |
+|------|--------|
+| 1 | Plug in USB. Confirm it is drive **E:** (or whatever you set in `sync-config.ps1`). |
+| 2 | Ensure PostgreSQL is running. |
+| 3 | Double-click `scripts\Export\export-sync-package.bat`. |
+| 4 | Wait for **Export finished.** |
+| 5 | In File Explorer, confirm `E:\cpdo-sync\package\` contains `server.backup`, `documents\`, and `MANIFEST.json`. |
+| 6 | Safely eject USB and give it to the Department Head. |
+
+**Troubleshooting export**
+
+| Error | Fix |
+|-------|-----|
+| Missing `sync-config.ps1` | Copy from `sync-config.example.ps1` into `scripts\` (not `scripts\Export\`). |
+| Red PowerShell parse errors | Pull latest repo; re-run the `.bat` file. |
+| `pg_dump` not found | Install PostgreSQL or add its `bin` folder to PATH. |
+| `pg_dump failed` | Start PostgreSQL; check `DB_PASSWORD` in `server\.env`. |
+
+---
+
+### DH laptop — import (Department Head)
+
+**Prerequisites:** App already installed (§§3–10). USB package from office PC.
+
+| Step | Action |
+|------|--------|
+| 1 | Plug in USB (same letter as in `sync-config.ps1`, e.g. `E:\cpdo-sync`). |
+| 2 | Confirm `E:\cpdo-sync\package\server.backup` exists. |
+| 3 | **Close** all CPDO app windows (Laravel + frontend). |
+| 4 | Double-click `scripts\Import\import-sync-package.bat`. |
+| 5 | Type **`YES`** and press Enter. |
+| 6 | Wait for **Import finished.** |
+| 7 | Double-click `scripts\For Opening the System\start-cpdo-system.bat`. |
+| 8 | Open `http://localhost:9000` — log in with the **same accounts** as the office PC. |
+| 9 | Spot-check: Dashboard loads; open one PDF. |
+
+**Troubleshooting import**
+
+| Error | Fix |
+|-------|-----|
+| Missing backup file | Run export on office PC first; check `$SyncFolder` matches USB path. |
+| `pg_restore failed` | PostgreSQL running; matching password in `server\.env`; retry after `DROP DATABASE server; CREATE DATABASE server;` in pgAdmin. |
+| Login OK but PDF blank | Re-import; ensure `documents\` was on the USB. |
+
+---
+
+### Repeat each month
+
+1. Office: `Export\export-sync-package.bat`  
+2. Hand off USB  
+3. DH: `Import\import-sync-package.bat` → start app  
+
+Data on the DH laptop matches the office PC **as of the export time** only.
+
+---
+
+### Optional: auto-export on office PC
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "C:\Apps\cpdo-zoning-management-system\scripts\register-monthly-export.ps1"
+```
+
+Runs export every 4 weeks (Friday 6 PM). USB drive letter in `sync-config.ps1` must be connected. Adjust timing in **Task Scheduler** → task name `CPDO Export Sync Package`.
+
+---
+
 ## 13) Updating After `git pull`
 
 When the repo is updated on GitHub:
@@ -277,7 +394,7 @@ cd ..\client
 npm install
 ```
 
-Restart using `scripts\start-cpdo-system.bat` (or reboot if auto-start is enabled).
+Restart using `scripts\For Opening the System\start-cpdo-system.bat` (or reboot if auto-start is enabled).
 
 ---
 
@@ -310,12 +427,12 @@ Restart using `scripts\start-cpdo-system.bat` (or reboot if auto-start is enable
 ### `php` or `npm` not recognized
 
 - Reinstall or add to PATH
-- Or set full paths in `scripts\_start-laravel.bat` and `_start-client.bat`
+- Or set full paths in `scripts\For Opening the System\_start-laravel.bat` and `_start-client.bat`
 
 ### Port already in use (8000 / 9000)
 
 - Close old terminal windows or reboot
-- Run `start-cpdo-system.bat` again
+- Run `scripts\For Opening the System\start-cpdo-system.bat` again
 
 ### PDF preview blank / 401
 
@@ -344,6 +461,7 @@ Restart using `scripts\start-cpdo-system.bat` (or reboot if auto-start is enable
 - [ ] Manual startup test passed
 - [ ] Auto-start enabled and tested after reboot
 - [ ] Backup job configured + one restore test done
+- [ ] Sync export/import tested once (§12.5) if DH uses a laptop copy
 - [ ] Default passwords changed
 - [ ] This runbook handed over
 

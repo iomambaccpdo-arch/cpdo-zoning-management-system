@@ -1,0 +1,2 @@
+# Local sync path (per PC — copy from sync-config.example.ps1)
+scripts/sync-config.ps1
