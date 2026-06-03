@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 
 class Document extends Model
@@ -15,6 +16,7 @@ class Document extends Model
         'due_date',
         'applicant_name',
         'received_by',
+        'received_by_user_id',
         'assisted_by',
         'oic',
         'barangay_id',
@@ -47,9 +49,31 @@ class Document extends Model
         return $this->belongsTo(Purok::class);
     }
 
+    public function receivedByUser()
+    {
+        return $this->belongsTo(User::class, 'received_by_user_id');
+    }
+
     public function routedToUsers()
     {
         return $this->belongsToMany(User::class, 'document_routes', 'document_id', 'user_id')->withTimestamps();
+    }
+
+    protected function receivedBy(): Attribute
+    {
+        return Attribute::get(function (?string $value) {
+            if ($this->received_by_user_id) {
+                $user = $this->relationLoaded('receivedByUser')
+                    ? $this->receivedByUser
+                    : $this->receivedByUser()->first();
+
+                if ($user) {
+                    return $user->fullName();
+                }
+            }
+
+            return $value;
+        });
     }
 
     public function attachments()

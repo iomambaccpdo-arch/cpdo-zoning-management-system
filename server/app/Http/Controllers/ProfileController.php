@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Document;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
@@ -36,6 +37,10 @@ class ProfileController extends Controller
         }
 
         $user->update($userData);
+
+        Document::query()
+            ->where('received_by_user_id', $user->id)
+            ->update(['received_by' => $user->fullName()]);
 
         return response()->json($user->load('roles.permissions')->append('permissions'));
     }

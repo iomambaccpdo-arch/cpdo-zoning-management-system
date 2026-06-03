@@ -7,6 +7,7 @@ import * as z from "zod"
 import { format } from "date-fns"
 import { CalendarIcon, UploadCloud, MapPin, CheckCircle2 } from "lucide-react"
 
+import { useAuthStore } from "~/store/auth"
 import { Button } from "~/components/ui/button"
 import {
     Dialog,
@@ -96,11 +97,22 @@ interface NewDocumentModalProps {
     children?: React.ReactNode
 }
 
+function formatUserFullName(user: {
+    first_name: string
+    middle_name?: string | null
+    last_name: string
+}) {
+    return [user.first_name, user.middle_name, user.last_name].filter(Boolean).join(" ")
+}
+
 export function NewDocumentModal({ children }: NewDocumentModalProps) {
     const [open, setOpen] = React.useState(false)
     const [activeStep, setActiveStep] = React.useState(0)
     const [isMapModalOpen, setIsMapModalOpen] = React.useState(false)
+    const [uploadProgress, setUploadProgress] = React.useState(0)
     const queryClient = useQueryClient()
+    const authUser = useAuthStore((state) => state.user)
+    const receivedByLabel = authUser ? formatUserFullName(authUser) : "Your account"
 
     const { data: zonings } = useQuery({
         queryKey: ['zonings'],
@@ -124,8 +136,9 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
             zoning: "",
             zoningApplicationNo: "",
             typeOfProject: "",
+            dateOfApplication: new Date(),
             applicantName: "",
-            receivedBy: "",
+            receivedBy: "Auto-assigned by System",
             assistedBy: "",
             routedTo: [],
             oic: "",
@@ -230,10 +243,16 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
                 })
             }
 
-            return await DocumentService.createDocument(formData)
+            return await DocumentService.createDocument(formData, (progressEvent) => {
+                if (progressEvent.total) {
+                    const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+                    setUploadProgress(percentCompleted)
+                }
+            })
         },
         onSuccess: () => {
             setOpen(false)
+            setUploadProgress(0)
             form.reset()
             setActiveStep(0)
             queryClient.invalidateQueries({ queryKey: ['documents'] })
@@ -266,7 +285,7 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
                     </DialogHeader>
                 </div>
 
-                <div className="h-auto min-h-[5rem] py-2 border-b px-6 bg-background relative z-10">
+                <div className="h-auto min-h-[7rem] shrink-0 py-2 pb-4 border-b px-6 bg-background w-full">
                     <Stepper activeStep={activeStep} steps={steps} />
                 </div>
 
@@ -353,37 +372,9 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
                                     render={({ field }) => (
                                         <FormItem>
                                             <FormLabel>Date of Application *</FormLabel>
-                                            <Popover>
-                                                <PopoverTrigger asChild>
-                                                    <FormControl>
-                                                        <Button
-                                                            variant={"outline"}
-                                                            className={cn(
-                                                                "w-full pl-3 text-left font-normal bg-blue-50/50",
-                                                                !field.value && "text-muted-foreground"
-                                                            )}
-                                                        >
-                                                            {field.value ? (
-                                                                format(field.value, "MMMM d, yyyy")
-                                                            ) : (
-                                                                <span>Pick a date</span>
-                                                            )}
-                                                            <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                                                        </Button>
-                                                    </FormControl>
-                                                </PopoverTrigger>
-                                                <PopoverContent className="w-auto p-0" align="start">
-                                                    <Calendar
-                                                        mode="single"
-                                                        selected={field.value}
-                                                        onSelect={field.onChange}
-                                                        disabled={(date) =>
-                                                            date > new Date() || date < new Date("1900-01-01")
-                                                        }
-                                                        initialFocus
-                                                    />
-                                                </PopoverContent>
-                                            </Popover>
+                                            <FormControl>
+                                                <Input readOnly value={field.value ? format(field.value, "MMMM d, yyyy") : format(new Date(), "MMMM d, yyyy")} className="bg-blue-50/50 font-medium" />
+                                            </FormControl>
                                             <FormMessage />
                                         </FormItem>
                                     )}
@@ -451,12 +442,19 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
                                 <FormField
                                     control={form.control}
                                     name="receivedBy"
-                                    render={({ field }) => (
+                                    render={() => (
                                         <FormItem>
                                             <FormLabel>Received By *</FormLabel>
                                             <FormControl>
-                                                <Input placeholder="Received by" className="bg-gray-50/50" {...field} />
+                                                <Input
+                                                    readOnly
+                                                    className="bg-gray-50/50"
+                                                    value={receivedByLabel}
+                                                />
                                             </FormControl>
+                                            <FormDescription>
+                                                Linked to your account and updates when your profile changes.
+                                            </FormDescription>
                                             <FormMessage />
                                         </FormItem>
                                     )}
@@ -707,22 +705,22 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
                                                         type="file"
                                                         multiple
                                                         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                                                        accept=".pdf,.doc,.docx,.jpg,.png"
+                                                        accept=".pdf"
                                                     />
                                                     <UploadCloud className="h-10 w-10 text-gray-400 mb-4" />
                                                     <div className="flex items-center gap-2 mb-2">
                                                         <Button type="button" className="bg-green-600 hover:bg-green-700 text-white pointer-events-none">
                                                             <UploadCloud className="mr-2 h-4 w-4" />
-                                                            Upload files
+                                                            Upload PDF Files
                                                         </Button>
                                                         <span className="text-sm text-gray-500">
                                                             {field.value && field.value.length > 0
                                                                 ? `${field.value.length} file(s) attached.`
-                                                                : "No file attached. Upload one or more files."}
+                                                                : "No file attached. Upload one or more PDF files."}
                                                         </span>
                                                     </div>
                                                     <p className="text-xs text-gray-400 mt-2">
-                                                        Supported files: PDF, DOC, DOCX, JPG, PNG (Max 10MB)
+                                                        Supported files: PDF only (No size limit)
                                                     </p>
 
                                                     {field.value && field.value.length > 0 && (
@@ -777,7 +775,7 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
                             disabled={isPending}
                             className="bg-green-600 hover:bg-green-700 text-white md:min-w-[150px]"
                         >
-                            {isPending ? "Submitting..." : "Submit Document"}
+                            {isPending ? (uploadProgress > 0 && uploadProgress < 100 ? `Uploading... ${uploadProgress}%` : "Submitting...") : "Submit Document"}
                         </Button>
                     )}
                 </DialogFooter>

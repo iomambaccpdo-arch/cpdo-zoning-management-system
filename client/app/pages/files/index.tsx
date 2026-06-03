@@ -36,6 +36,8 @@ export default function Files() {
 
     const handleDeleted = () => {
         queryClient.invalidateQueries({ queryKey: ["attachments"] })
+        queryClient.invalidateQueries({ queryKey: ["documents"] })
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] })
     }
 
     return (

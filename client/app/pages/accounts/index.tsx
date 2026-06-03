@@ -219,8 +219,12 @@ export default function AccountsPage() {
             </div>
 
             <AccountModal
+                key={selectedUser?.id ?? "new"}
                 isOpen={isModalOpen}
-                onClose={() => setIsModalOpen(false)}
+                onClose={() => {
+                    setIsModalOpen(false);
+                    setSelectedUser(null);
+                }}
                 onSuccess={fetchUsers}
                 user={selectedUser}
             />

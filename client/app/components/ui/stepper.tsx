@@ -9,7 +9,7 @@ interface StepperProps extends React.HTMLAttributes<HTMLDivElement> {
 
 export function Stepper({ activeStep, steps, className, ...props }: StepperProps) {
     return (
-        <div className={cn("flex flex-row items-center justify-between", className)} {...props}>
+        <div className={cn("flex flex-row items-center justify-between pointer-events-none", className)} {...props}>
             {steps.map((step, index) => {
                 const isActive = index === activeStep
                 const isCompleted = index < activeStep
@@ -27,7 +27,7 @@ export function Stepper({ activeStep, steps, className, ...props }: StepperProps
                             >
                                 {isCompleted ? <Check className="h-4 w-4" /> : <span className="text-sm font-medium">{index + 1}</span>}
                             </div>
-                            <div className="absolute top-10 flex flex-col items-center w-32 text-center">
+                            <div className="absolute top-10 flex flex-col items-center w-32 text-center pointer-events-none">
                                 <span className={cn("text-xs font-medium", isActive || isCompleted ? "text-foreground" : "text-muted-foreground")}>
                                     {step.title}
                                 </span>

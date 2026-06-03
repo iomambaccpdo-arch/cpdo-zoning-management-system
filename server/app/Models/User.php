@@ -56,16 +56,31 @@ class User extends Authenticatable
         return $this->belongsToMany(Role::class, 'user_roles');
     }
 
+    public function receivedDocuments()
+    {
+        return $this->hasMany(Document::class, 'received_by_user_id');
+    }
+
+    public function fullName(): string
+    {
+        return trim(implode(' ', array_filter([
+            $this->first_name,
+            $this->middle_name,
+            $this->last_name,
+        ])));
+    }
+
     public function getPermissionsAttribute()
     {
         $permissions = [];
         foreach ($this->roles as $role) {
             foreach ($role->permissions as $permission) {
-                if (!in_array($permission->name, $permissions)) {
+                if (! in_array($permission->name, $permissions)) {
                     $permissions[] = $permission->name;
                 }
             }
         }
+
         return $permissions;
     }
 

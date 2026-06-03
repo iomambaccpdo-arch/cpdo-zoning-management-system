@@ -2,12 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Document;
 use App\Models\User;
-use App\Models\Role;
 use App\Support\ActivityLogger;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 
 class UserController extends Controller
@@ -20,12 +20,12 @@ class UserController extends Controller
 
         if ($request->has('search')) {
             $search = $request->search;
-            $query->where(function($q) use ($search) {
+            $query->where(function ($q) use ($search) {
                 $q->where('first_name', 'like', "%{$search}%")
-                  ->orWhere('last_name', 'like', "%{$search}%")
-                  ->orWhere('email', 'like', "%{$search}%")
-                  ->orWhere('designation', 'like', "%{$search}%")
-                  ->orWhere('section', 'like', "%{$search}%");
+                    ->orWhere('last_name', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%")
+                    ->orWhere('designation', 'like', "%{$search}%")
+                    ->orWhere('section', 'like', "%{$search}%");
             });
         }
 
@@ -87,7 +87,7 @@ class UserController extends Controller
             'roles.*' => 'exists:roles,id',
         ]);
 
-        return DB::transaction(function () use ($validated, $user) {
+        return DB::transaction(function () use ($validated, $user, $request) {
             $userData = [
                 'first_name' => $validated['first_name'],
                 'middle_name' => $validated['middle_name'],
@@ -103,6 +103,10 @@ class UserController extends Controller
 
             $user->update($userData);
             $user->roles()->sync($validated['roles']);
+
+            Document::query()
+                ->where('received_by_user_id', $user->id)
+                ->update(['received_by' => $user->fullName()]);
 
             ActivityLogger::log(
                 'update',
@@ -124,6 +128,7 @@ class UserController extends Controller
             "Deleted account: {$user->first_name} {$user->last_name} ({$user->email})"
         );
         $user->delete();
+
         return response()->json(null, 204);
     }
 }

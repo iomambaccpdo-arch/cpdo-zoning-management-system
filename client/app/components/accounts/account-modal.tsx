@@ -25,6 +25,7 @@ import type { User, Role } from "../../api/AccountService";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Stepper } from "../../components/ui/stepper";
 import { cn } from "../../lib/utils";
+import { toast } from "sonner";
 
 const steps = [
     { title: "Personal Info", description: "Basic Details" },
@@ -32,25 +33,47 @@ const steps = [
     { title: "Security", description: "Password Setup" },
 ];
 
-const formSchema = z.object({
-    first_name: z.string().min(1, "First name is required"),
-    middle_name: z.string().optional(),
-    last_name: z.string().min(1, "Last name is required"),
-    email: z.string().email("Invalid email address"),
-    designation: z.string().min(1, "Designation is required"),
-    section: z.string().min(1, "Section is required"),
-    roles: z.array(z.number()).min(1, "Select at least one role"),
-    password: z.string().min(8, "Password must be at least 8 characters").optional().or(z.literal("")),
-    password_confirmation: z.string().optional().or(z.literal("")),
-}).refine((data) => {
-    if (data.password && data.password !== data.password_confirmation) {
-        return false;
-    }
-    return true;
-}, {
-    message: "Passwords do not match",
-    path: ["password_confirmation"],
-});
+const createFormSchema = (isEditing: boolean) =>
+    z
+        .object({
+            first_name: z.string().min(1, "First name is required"),
+            middle_name: z.string().optional(),
+            last_name: z.string().min(1, "Last name is required"),
+            email: z.string().email("Invalid email address"),
+            designation: z.string().min(1, "Designation is required"),
+            section: z.string().min(1, "Section is required"),
+            roles: z.array(z.number()).min(1, "Select at least one role"),
+            password: z.string(),
+            password_confirmation: z.string(),
+        })
+        .superRefine((data, ctx) => {
+            const hasPassword = data.password.length > 0;
+
+            if (!isEditing && !hasPassword) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: "Password is required",
+                    path: ["password"],
+                });
+            }
+
+            if (hasPassword) {
+                if (data.password.length < 8) {
+                    ctx.addIssue({
+                        code: z.ZodIssueCode.custom,
+                        message: "Password must be at least 8 characters",
+                        path: ["password"],
+                    });
+                }
+                if (data.password !== data.password_confirmation) {
+                    ctx.addIssue({
+                        code: z.ZodIssueCode.custom,
+                        message: "Passwords do not match",
+                        path: ["password_confirmation"],
+                    });
+                }
+            }
+        });
 
 interface AccountModalProps {
     isOpen: boolean;
@@ -68,8 +91,10 @@ export const AccountModal: React.FC<AccountModalProps> = ({
     const [roles, setRoles] = useState<Role[]>([]);
     const [loading, setLoading] = useState(false);
     const [activeStep, setActiveStep] = useState(0);
+    const isEditing = Boolean(user);
+    const formSchema = createFormSchema(isEditing);
 
-    const form = useForm<z.infer<typeof formSchema>>({
+    const form = useForm<z.infer<ReturnType<typeof createFormSchema>>>({
         resolver: zodResolver(formSchema),
         defaultValues: {
             first_name: "",
@@ -97,9 +122,10 @@ export const AccountModal: React.FC<AccountModalProps> = ({
     }, []);
 
     useEffect(() => {
-        if (isOpen) {
-            setActiveStep(0); // Reset step when opened
-        }
+        if (!isOpen) return;
+
+        setActiveStep(0);
+
         if (user) {
             form.reset({
                 first_name: user.first_name,
@@ -108,7 +134,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                 email: user.email,
                 designation: user.designation,
                 section: user.section,
-                roles: user.roles.map((r) => r.id),
+                roles: user.roles?.map((r) => r.id) ?? [],
                 password: "",
                 password_confirmation: "",
             });
@@ -125,7 +151,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                 password_confirmation: "",
             });
         }
-    }, [user, form, isOpen]);
+    }, [isOpen, user?.id, form]);
 
     const nextStep = async () => {
         let fieldsToValidate: any[] = [];
@@ -146,7 +172,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
         setActiveStep((prev) => Math.max(prev - 1, 0));
     };
 
-    const onSubmit = async (values: z.infer<typeof formSchema>) => {
+    const onSubmit = async (values: z.infer<ReturnType<typeof createFormSchema>>) => {
         setLoading(true);
         try {
             if (user) {
@@ -158,6 +184,10 @@ export const AccountModal: React.FC<AccountModalProps> = ({
             onClose();
         } catch (error: any) {
             console.error("Failed to save user", error);
+            const message =
+                error.response?.data?.message ||
+                (user ? "Failed to update account" : "Failed to create account");
+            toast.error(message);
             if (error.response?.data?.errors) {
                 Object.keys(error.response.data.errors).forEach((key) => {
                     form.setError(key as any, {
@@ -171,7 +201,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
     };
 
     return (
-        <Dialog open={isOpen} onOpenChange={onClose}>
+        <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
             <DialogContent className="sm:max-w-[700px] max-h-[90vh] flex flex-col p-0 gap-0">
                 <div className="p-6 pb-2">
                     <DialogHeader>
@@ -182,7 +212,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                     </DialogHeader>
                 </div>
 
-                <div className="h-auto min-h-[5rem] py-2 border-b px-6 bg-background relative z-10 w-full">
+                <div className="h-auto min-h-[7rem] shrink-0 py-2 pb-4 border-b px-6 bg-background w-full">
                     <Stepper activeStep={activeStep} steps={steps} />
                 </div>
 

@@ -1,7 +1,8 @@
 import * as React from "react"
 import { format } from "date-fns"
 import { useQuery } from "@tanstack/react-query"
-import { FileText, X, ChevronLeft, ChevronRight, Loader2 } from "lucide-react"
+import { FileText, X, ChevronLeft, ChevronRight, Loader2, Download, Eye, Pencil, FolderOpen, Trash2, Search } from "lucide-react"
+import { Input } from "~/components/ui/input"
 import { DocumentService } from "~/api/DocumentService"
 import type { DashboardMonthCount } from "~/api/DocumentService"
 import {
@@ -14,30 +15,65 @@ import {
 } from "~/components/ui/table"
 import { Button } from "~/components/ui/button"
 import { Skeleton } from "~/components/ui/skeleton"
+import { PdfPreviewModal } from "~/components/files/pdf-preview-modal"
+import { EditDocumentModal } from "~/components/documents/edit-document-modal"
+import { ManageAttachmentsModal } from "~/components/documents/manage-attachments-modal"
+import { DeleteDocumentConfirm } from "~/components/documents/delete-document-confirm"
+import { useAuthStore } from "~/store/auth"
 
 // ─── Year helpers ───────────────────────────────────────────────────────────
 const CURRENT_YEAR = new Date().getFullYear()
 const CURRENT_MONTH = new Date().getMonth() + 1 // 1-indexed
 const YEAR_OPTIONS = Array.from({ length: 6 }, (_, i) => CURRENT_YEAR - i)
 
-// ─── Month Documents table ───────────────────────────────────────────────────
-function MonthDocumentsTable({
+type DocumentsTableProps = {
+    year: number
+    month?: number
+    monthName?: string
+    search: string
+    headerTitle: string
+    headerSubtitle?: string
+    onClose?: () => void
+    canViewFiles: boolean
+    canEditDocument: boolean
+    canDeleteDocument: boolean
+    onEditDocument: (documentId: number) => void
+    onManageAttachments: (documentId: number) => void
+    onDeleteDocument: (documentId: number, documentTitle: string) => void
+}
+
+// ─── Documents table (month view or search results) ───────────────────────────
+function DocumentsTable({
     year,
     month,
     monthName,
+    search,
+    headerTitle,
+    headerSubtitle,
     onClose,
-}: {
-    year: number
-    month: number
-    monthName: string
-    onClose: () => void
-}) {
+    canViewFiles,
+    canEditDocument,
+    canDeleteDocument,
+    onEditDocument,
+    onManageAttachments,
+    onDeleteDocument,
+}: DocumentsTableProps) {
     const [page, setPage] = React.useState(1)
 
+    React.useEffect(() => {
+        setPage(1)
+    }, [search, year, month])
+
     const { data, isLoading } = useQuery({
-        queryKey: ["documents", year, month, page],
+        queryKey: ["documents", year, month, search, page],
         queryFn: () =>
-            DocumentService.getDocuments({ year, month, page, per_page: 10 }),
+            DocumentService.getDocuments({
+                year: year > 0 ? year : undefined,
+                month,
+                search: search || undefined,
+                page,
+                per_page: 10,
+            }),
     })
 
     const docs = data?.data ?? []
@@ -46,24 +82,31 @@ function MonthDocumentsTable({
     return (
         <div className="mt-4 rounded-md border bg-white shadow-sm overflow-hidden">
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b bg-zinc-50">
-                <div>
+            <div className="flex items-center justify-between px-4 py-3 border-b bg-zinc-50 gap-3">
+                <div className="min-w-0">
                     <p className="text-[11px] text-zinc-400 uppercase tracking-wide font-medium">
-                        Documents for
+                        {search ? "Search results" : "Documents for"}
                     </p>
-                    <p className="text-[14px] font-bold text-zinc-800">
-                        {monthName} {year}
+                    <p className="text-[14px] font-bold text-zinc-800 truncate">
+                        {headerTitle}
                     </p>
                     <p className="text-[12px] text-zinc-500 mt-0.5">
-                        {data?.total ?? "..."} Documents &nbsp;·&nbsp; (C) City Planning Development Office
+                        {data?.total ?? "..."} document{(data?.total ?? 0) === 1 ? "" : "s"}
+                        {headerSubtitle ? ` · ${headerSubtitle}` : ""}
+                        {!headerSubtitle && (
+                            <> &nbsp;·&nbsp; (C) City Planning Development Office</>
+                        )}
                     </p>
                 </div>
-                <button
-                    onClick={onClose}
-                    className="rounded-full p-1.5 hover:bg-zinc-200 transition-colors text-zinc-500"
-                >
-                    <X className="h-4 w-4" />
-                </button>
+                {onClose && (
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="shrink-0 rounded-full p-1.5 hover:bg-zinc-200 transition-colors text-zinc-500"
+                    >
+                        <X className="h-4 w-4" />
+                    </button>
+                )}
             </div>
 
             {/* Table */}
@@ -75,14 +118,16 @@ function MonthDocumentsTable({
                         <TableHead className="text-[12px] font-semibold">App No.</TableHead>
                         <TableHead className="text-[12px] font-semibold">Type</TableHead>
                         <TableHead className="text-[12px] font-semibold">Applicant</TableHead>
+                        <TableHead className="text-[12px] font-semibold">Received by</TableHead>
                         <TableHead className="text-[12px] font-semibold">Location</TableHead>
+                        <TableHead className="text-[12px] font-semibold text-right">Actions</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
                     {isLoading &&
                         Array.from({ length: 4 }).map((_, i) => (
                             <TableRow key={i}>
-                                {Array.from({ length: 6 }).map((_, j) => (
+                                {Array.from({ length: 8 }).map((_, j) => (
                                     <TableCell key={j}>
                                         <Skeleton className="h-4 w-full" />
                                     </TableCell>
@@ -91,9 +136,15 @@ function MonthDocumentsTable({
                         ))}
                     {!isLoading && docs.length === 0 && (
                         <TableRow>
-                            <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">
+                            <TableCell colSpan={8} className="text-center py-10 text-muted-foreground">
                                 <FileText className="h-7 w-7 mx-auto mb-2 opacity-30" />
-                                <p className="text-[13px]">No documents for this month.</p>
+                                <p className="text-[13px]">
+                                    {search
+                                        ? "No documents match your search."
+                                        : monthName
+                                          ? `No documents for ${monthName}${year > 0 ? ` ${year}` : ""}.`
+                                          : "No documents found."}
+                                </p>
                             </TableCell>
                         </TableRow>
                     )}
@@ -117,10 +168,67 @@ function MonthDocumentsTable({
                                 <TableCell className="max-w-[150px] truncate">
                                     {doc.applicant_name}
                                 </TableCell>
+                                <TableCell className="max-w-[130px] truncate">
+                                    {doc.received_by ?? "—"}
+                                </TableCell>
                                 <TableCell className="max-w-[140px] truncate">
                                     {doc.barangay?.name && doc.purok?.name
                                         ? `${doc.barangay.name}, Purok ${doc.purok.name}`
                                         : "—"}
+                                </TableCell>
+                                <TableCell className="text-right whitespace-nowrap">
+                                    {canEditDocument && (
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="h-7 w-7 p-0 text-emerald-700 hover:bg-emerald-50"
+                                            onClick={() => onEditDocument(doc.id)}
+                                            title="Edit Document"
+                                        >
+                                            <Pencil className="h-4 w-4" />
+                                        </Button>
+                                    )}
+                                    {canViewFiles && (
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="h-7 w-7 p-0 text-purple-700 hover:bg-purple-50"
+                                            onClick={() => onManageAttachments(doc.id)}
+                                            title="Manage Attachments"
+                                        >
+                                            <FolderOpen className="h-4 w-4" />
+                                        </Button>
+                                    )}
+                                    {canViewFiles && (
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="h-7 w-7 p-0 text-blue-600 hover:text-blue-800 hover:bg-blue-50"
+                                            disabled={!doc.attachments || doc.attachments.length === 0}
+                                            onClick={() => {
+                                                const latestAttachment = [...(doc.attachments ?? [])].sort(
+                                                    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                                                )[0]
+                                                if (latestAttachment) {
+                                                    DocumentService.downloadAttachment(latestAttachment.id, latestAttachment.file_name)
+                                                }
+                                            }}
+                                            title="Download Latest Attachment"
+                                        >
+                                            <Download className="h-4 w-4" />
+                                        </Button>
+                                    )}
+                                    {canDeleteDocument && (
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="h-7 w-7 p-0 text-red-600 hover:text-red-800 hover:bg-red-50"
+                                            onClick={() => onDeleteDocument(doc.id, doc.document_title)}
+                                            title="Delete Document"
+                                        >
+                                            <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                    )}
                                 </TableCell>
                             </TableRow>
                         ))}
@@ -159,8 +267,21 @@ function MonthDocumentsTable({
 
 // ─── Main Dashboard ──────────────────────────────────────────────────────────
 export default function Dashboard() {
+    const { user } = useAuthStore()
     const [selectedYear, setSelectedYear] = React.useState(CURRENT_YEAR)
     const [selectedMonth, setSelectedMonth] = React.useState<DashboardMonthCount | null>(null)
+    const [docSearch, setDocSearch] = React.useState("")
+    const [debouncedDocSearch, setDebouncedDocSearch] = React.useState("")
+
+    React.useEffect(() => {
+        const timer = setTimeout(() => setDebouncedDocSearch(docSearch.trim()), 400)
+        return () => clearTimeout(timer)
+    }, [docSearch])
+    const [previewAttachment, setPreviewAttachment] = React.useState<{ id: number; fileName: string } | null>(null)
+    const [editDocumentId, setEditDocumentId] = React.useState<number | null>(null)
+    const [manageDocumentId, setManageDocumentId] = React.useState<number | null>(null)
+    const [deleteDocumentId, setDeleteDocumentId] = React.useState<number | null>(null)
+    const [deleteDocumentTitle, setDeleteDocumentTitle] = React.useState<string>("")
 
     const { data, isLoading } = useQuery({
         queryKey: ["dashboard", selectedYear],
@@ -169,6 +290,16 @@ export default function Dashboard() {
 
     const monthlyCounts = data?.monthly_counts ?? []
     const recentAttachments = data?.recent_attachments ?? []
+
+    const canViewFiles = user?.roles?.some((role) =>
+        role.permissions?.some((p: any) => p.resource === "Files" && p.name === "view")
+    ) ?? false
+    const canEditDocument = user?.roles?.some((role) =>
+        role.permissions?.some((p: any) => p.resource === "Files" && p.name === "edit")
+    ) ?? false
+    const canDeleteDocument = user?.roles?.some((role) =>
+        role.permissions?.some((p: any) => p.resource === "Files" && p.name === "delete")
+    ) ?? false
 
     // Pre-select current month once data loads
     React.useEffect(() => {
@@ -198,28 +329,38 @@ export default function Dashboard() {
 
                 {/* ── Section: Document / Months ── */}
                 <div>
-                    <div className="flex items-center justify-between mb-3">
-                        <h2 className="text-[13px] font-semibold text-zinc-700 uppercase tracking-wide">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                        <h2 className="text-[13px] font-semibold text-zinc-700 uppercase tracking-wide shrink-0">
                             Document / Months
                         </h2>
-                        {/* Year filter */}
-                        <div className="flex items-center gap-2">
-                            <label className="text-[12px] text-zinc-500 font-medium">Year:</label>
-                            <select
-                                value={selectedYear}
-                                onChange={(e) => {
-                                    setSelectedYear(Number(e.target.value))
-                                    setSelectedMonth(null)
-                                }}
-                                className="text-[12px] border border-zinc-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-zinc-400"
-                            >
-                                <option value={0}>All Years</option>
-                                {YEAR_OPTIONS.map((y) => (
-                                    <option key={y} value={y}>
-                                        {y}
-                                    </option>
-                                ))}
-                            </select>
+                        <div className="flex flex-1 flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:justify-end">
+                            <div className="relative flex-1 sm:max-w-md">
+                                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                    placeholder="Search title, app no., applicant, location..."
+                                    className="pl-8 text-[13px] h-8 bg-white"
+                                    value={docSearch}
+                                    onChange={(e) => setDocSearch(e.target.value)}
+                                />
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                                <label className="text-[12px] text-zinc-500 font-medium">Year:</label>
+                                <select
+                                    value={selectedYear}
+                                    onChange={(e) => {
+                                        setSelectedYear(Number(e.target.value))
+                                        setSelectedMonth(null)
+                                    }}
+                                    className="text-[12px] border border-zinc-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-zinc-400 h-8"
+                                >
+                                    <option value={0}>All Years</option>
+                                    {YEAR_OPTIONS.map((y) => (
+                                        <option key={y} value={y}>
+                                            {y}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
                         </div>
                     </div>
 
@@ -261,13 +402,52 @@ export default function Dashboard() {
                         </div>
                     )}
 
-                    {/* Inline documents table on month card click */}
-                    {selectedMonth && (
-                        <MonthDocumentsTable
+                    {/* Search results across selected year (or all years) */}
+                    {debouncedDocSearch && (
+                        <DocumentsTable
+                            year={selectedYear}
+                            month={selectedMonth?.month}
+                            monthName={selectedMonth?.month_name}
+                            search={debouncedDocSearch}
+                            headerTitle={
+                                selectedMonth
+                                    ? `${selectedMonth.month_name}${selectedYear > 0 ? ` ${selectedYear}` : ""}`
+                                    : selectedYear > 0
+                                      ? `All months · ${selectedYear}`
+                                      : "All years"
+                            }
+                            headerSubtitle={`Matching "${debouncedDocSearch}"`}
+                            onClose={() => setDocSearch("")}
+                            canViewFiles={canViewFiles}
+                            canEditDocument={canEditDocument}
+                            canDeleteDocument={canDeleteDocument}
+                            onEditDocument={(documentId) => setEditDocumentId(documentId)}
+                            onManageAttachments={(documentId) => setManageDocumentId(documentId)}
+                            onDeleteDocument={(documentId, documentTitle) => {
+                                setDeleteDocumentId(documentId)
+                                setDeleteDocumentTitle(documentTitle)
+                            }}
+                        />
+                    )}
+
+                    {/* Month documents table (when a month is selected and not searching) */}
+                    {selectedMonth && !debouncedDocSearch && (
+                        <DocumentsTable
                             year={selectedYear}
                             month={selectedMonth.month}
                             monthName={selectedMonth.month_name}
+                            search=""
+                            headerTitle={`${selectedMonth.month_name} ${selectedYear > 0 ? selectedYear : ""}`.trim()}
                             onClose={() => setSelectedMonth(null)}
+                            canViewFiles={canViewFiles}
+                            canEditDocument={canEditDocument}
+                            canDeleteDocument={canDeleteDocument}
+                            onEditDocument={(documentId) => setEditDocumentId(documentId)}
+                            onManageAttachments={(documentId) => setManageDocumentId(documentId)}
+                            onDeleteDocument={(documentId, documentTitle) => {
+                                setDeleteDocumentId(documentId)
+                                setDeleteDocumentTitle(documentTitle)
+                            }}
                         />
                     )}
                 </div>
@@ -285,6 +465,9 @@ export default function Dashboard() {
                                     <TableHead className="text-[12px] font-semibold text-right">
                                         Date Uploaded
                                     </TableHead>
+                                    <TableHead className="text-[12px] font-semibold text-right">
+                                        Actions
+                                    </TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -293,11 +476,12 @@ export default function Dashboard() {
                                         <TableRow key={i}>
                                             <TableCell><Skeleton className="h-4 w-3/4" /></TableCell>
                                             <TableCell><Skeleton className="h-4 w-36 ml-auto" /></TableCell>
+                                            <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
                                         </TableRow>
                                     ))}
                                 {!isLoading && recentAttachments.length === 0 && (
                                     <TableRow>
-                                        <TableCell colSpan={2} className="text-center py-10 text-muted-foreground">
+                                        <TableCell colSpan={3} className="text-center py-10 text-muted-foreground">
                                             <FileText className="h-7 w-7 mx-auto mb-2 opacity-30" />
                                             <p className="text-[13px]">No recent files uploaded.</p>
                                         </TableCell>
@@ -307,12 +491,28 @@ export default function Dashboard() {
                                     recentAttachments.map((att) => (
                                         <TableRow key={att.id} className="hover:bg-zinc-50 text-[13px]">
                                             <TableCell className="text-green-700 font-medium">
-                                                {att.file_name}
+                                                <div className="flex items-center gap-2">
+                                                    <FileText className={`h-4 w-4 shrink-0 ${att.file_name.toLowerCase().endsWith('.pdf') ? 'text-red-500' : 'text-zinc-400'}`} />
+                                                    {att.file_name}
+                                                </div>
                                             </TableCell>
                                             <TableCell className="text-right text-zinc-500 whitespace-nowrap">
                                                 {att.created_at
                                                     ? format(new Date(att.created_at), "MMMM d, yyyy h:mm a")
                                                     : "—"}
+                                            </TableCell>
+                                            <TableCell className="text-right whitespace-nowrap">
+                                                {canViewFiles && (
+                                                    <Button
+                                                        size="sm"
+                                                        variant="ghost"
+                                                        className="h-7 w-7 p-0 text-zinc-700 hover:bg-zinc-100"
+                                                        onClick={() => setPreviewAttachment({ id: att.id, fileName: att.file_name })}
+                                                        title="Preview"
+                                                    >
+                                                        <Eye className="h-4 w-4" />
+                                                    </Button>
+                                                )}
                                             </TableCell>
                                         </TableRow>
                                     ))}
@@ -322,6 +522,37 @@ export default function Dashboard() {
                 </div>
 
             </div>
+
+            {previewAttachment && (
+                <PdfPreviewModal
+                    open={!!previewAttachment}
+                    onClose={() => setPreviewAttachment(null)}
+                    attachmentId={previewAttachment.id}
+                    fileName={previewAttachment.fileName}
+                />
+            )}
+
+            <EditDocumentModal
+                documentId={editDocumentId}
+                open={editDocumentId !== null}
+                onClose={() => setEditDocumentId(null)}
+            />
+
+            <ManageAttachmentsModal
+                documentId={manageDocumentId}
+                open={manageDocumentId !== null}
+                onClose={() => setManageDocumentId(null)}
+            />
+
+            <DeleteDocumentConfirm
+                documentId={deleteDocumentId}
+                documentTitle={deleteDocumentTitle}
+                open={deleteDocumentId !== null}
+                onClose={() => {
+                    setDeleteDocumentId(null)
+                    setDeleteDocumentTitle("")
+                }}
+            />
         </div>
     )
 }

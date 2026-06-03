@@ -3,11 +3,17 @@ import axiosInstance from "../lib/axios";
 export interface DocumentAttachment {
   id: number;
   document_id: number;
+  uploaded_by?: number | null;
   file_path: string;
   file_name: string;
   file_type: string | null;
   file_size: number | null;
   created_at: string;
+  uploader?: {
+    id: number;
+    first_name: string;
+    last_name: string;
+  } | null;
   document?: {
     id: number;
     document_title: string;
@@ -94,6 +100,11 @@ export interface PaginatedAttachments {
   total: number;
 }
 
+export interface UploadDocumentAttachmentsResponse {
+  message: string;
+  attachments: DocumentAttachment[];
+}
+
 export class DocumentService {
   static async getNextApplicationNo(documentTitle: string) {
     const response = await axiosInstance.get<{ applicationNo: string }>(
@@ -124,22 +135,29 @@ export class DocumentService {
     return response.data;
   }
 
-  static async createDocument(data: FormData) {
+  static async createDocument(data: FormData, onUploadProgress?: (progressEvent: any) => void) {
     const response = await axiosInstance.post("/api/documents", data, {
       headers: { "Content-Type": "multipart/form-data" },
+      onUploadProgress,
     });
     return response.data;
   }
 
-  static async updateDocument(id: number, data: FormData) {
+  static async updateDocument(id: number, data: FormData, onUploadProgress?: (progressEvent: any) => void) {
     const response = await axiosInstance.post(`/api/documents/${id}`, data, {
       headers: { "Content-Type": "multipart/form-data" },
+      onUploadProgress,
     });
     return response.data;
   }
 
   static async deleteDocument(id: number) {
     const response = await axiosInstance.delete(`/api/documents/${id}`);
+    return response.data;
+  }
+
+  static async getDocument(id: number) {
+    const response = await axiosInstance.get<Document>(`/api/documents/${id}`);
     return response.data;
   }
 
@@ -152,6 +170,28 @@ export class DocumentService {
       "/api/attachments",
       { params },
     );
+    return response.data;
+  }
+
+  static async getDocumentAttachments(documentId: number) {
+    const response = await axiosInstance.get<DocumentAttachment[]>(
+      `/api/documents/${documentId}/attachments`,
+    );
+    return response.data;
+  }
+
+  static async uploadDocumentAttachments(documentId: number, files: File[]) {
+    const formData = new FormData();
+    files.forEach((file) => formData.append("files[]", file));
+
+    const response = await axiosInstance.post<UploadDocumentAttachmentsResponse>(
+      `/api/documents/${documentId}/attachments`,
+      formData,
+      {
+        headers: { "Content-Type": "multipart/form-data" },
+      },
+    );
+
     return response.data;
   }
 

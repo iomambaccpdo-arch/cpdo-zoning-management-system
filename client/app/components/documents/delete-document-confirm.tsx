@@ -28,6 +28,10 @@ export function DeleteDocumentConfirm({ documentId, documentTitle, open, onClose
         mutationFn: () => DocumentService.deleteDocument(documentId!),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["documents"] })
+            queryClient.invalidateQueries({ queryKey: ["attachments"] })
+            queryClient.invalidateQueries({ queryKey: ["dashboard"] })
+            queryClient.invalidateQueries({ queryKey: ["document", documentId] })
+            queryClient.invalidateQueries({ queryKey: ["document-attachments", documentId] })
             toast.success("Document deleted successfully")
             onClose()
         },

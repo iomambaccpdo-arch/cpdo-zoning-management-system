@@ -1,13 +1,12 @@
 <?php
 
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\UserController;
-use App\Http\Controllers\RoleController;
-use App\Http\Controllers\AuthController;
-use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\DocumentAttachmentController;
 use App\Http\Controllers\ActivityLogController;
+use App\Http\Controllers\AuthController;
+use App\Http\Controllers\DocumentAttachmentController;
+use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\RoleController;
+use App\Http\Controllers\UserController;
+use Illuminate\Support\Facades\Route;
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', [AuthController::class, 'user']);
@@ -15,7 +14,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Accounts Management
     Route::apiResource('users', UserController::class)->middleware('permission:accounts,view');
     Route::post('users/{user}', [UserController::class, 'update'])->middleware('permission:accounts,edit'); // For multipart/form-data if needed, but here we use json
-    
+
     // Profile Management
     Route::put('/profile', [ProfileController::class, 'update']);
 
@@ -25,6 +24,9 @@ Route::middleware('auth:sanctum')->group(function () {
     // Documents
     Route::get('documents/next-application-no', [\App\Http\Controllers\DocumentController::class, 'getNextApplicationNo']);
     Route::get('documents', [\App\Http\Controllers\DocumentController::class, 'index']);
+    Route::get('documents/{document}', [\App\Http\Controllers\DocumentController::class, 'show']);
+    Route::get('documents/{document}/attachments', [\App\Http\Controllers\DocumentController::class, 'attachments']);
+    Route::post('documents/{document}/attachments', [\App\Http\Controllers\DocumentController::class, 'uploadAttachments']);
     Route::post('documents', [\App\Http\Controllers\DocumentController::class, 'store']);
     Route::post('documents/{document}', [\App\Http\Controllers\DocumentController::class, 'update']);
     Route::delete('documents/{document}', [\App\Http\Controllers\DocumentController::class, 'destroy']);
