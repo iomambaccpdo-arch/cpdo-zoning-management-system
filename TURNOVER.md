@@ -69,6 +69,8 @@ psql --version
 
 If `pdo_pgsql` does not appear, enable it in `php.ini` and restart any open terminals.
 
+**PDF uploads:** The repo includes `server\php.ini` with higher upload limits. The provided `_start-laravel.bat` loads it automatically. If you edit upload sizes later, keep `post_max_size` ≥ total size of all files in one request.
+
 ---
 
 ## 4) Get the Project from GitHub
@@ -202,7 +204,7 @@ Created by `php artisan db:seed`. **Change passwords after first login** in prod
 | Path | Purpose |
 |------|---------|
 | `For Opening the System\start-cpdo-system.bat` | Starts API (8000) + app (9000), opens browser |
-| `For Opening the System\_start-laravel.bat` | Laravel only |
+| `For Opening the System\_start-laravel.bat` | Laravel only (loads `server\php.ini` for large PDF uploads) |
 | `For Opening the System\_start-client.bat` | Frontend only |
 | `For Opening the System\register-autostart.ps1` | Startup shortcut (runs on user log in) |
 | `For Opening the System\unregister-autostart.ps1` | Removes Startup shortcut |
@@ -210,6 +212,7 @@ Created by `php artisan db:seed`. **Change passwords after first login** in prod
 | `Import\import-sync-package.bat` | **DH laptop:** load USB package into local app |
 | `sync-config.example.ps1` | Copy to `sync-config.ps1` (see §12.5) |
 | `sync-common.ps1` | Shared helpers (do not run directly) |
+| `check-database.bat` | **Any PC:** test PostgreSQL, `.env`, tables, login accounts |
 | `register-monthly-export.ps1` | **Office PC:** optional scheduled export |
 
 **Prerequisites:** PostgreSQL running; `php` and `npm` on PATH (or edit `_start-*.bat` with full paths).
@@ -304,7 +307,11 @@ $SyncFolder = "E:\cpdo-sync"
 
 - **Office PC:** create only `E:\cpdo-sync` on the USB. The export script creates `E:\cpdo-sync\package\` automatically.
 - **DH laptop:** use the **same drive letter** if he plugs in the same USB (`E:\cpdo-sync`). If he copies the folder to disk, set `$SyncFolder` to that path (e.g. `D:\cpdo-sync`).
-4. Both PCs need `server\.env` with the same PostgreSQL **username and password** (database name `server`).
+4. On the **DH laptop**, `server\.env` must use:
+   - `DB_DATABASE=server`
+   - `DB_USERNAME` / `DB_PASSWORD` for **PostgreSQL installed on the DH laptop** (the password you set when installing Postgres on that PC)
+   - You do **not** copy the office PC's Postgres password unless you used the same password on both machines
+5. The DH laptop does **not** use the office database over the network. Data comes only from **USB import** (`import-sync-package.bat`) after the office runs export.
 
 ---
 
@@ -355,6 +362,38 @@ $SyncFolder = "E:\cpdo-sync"
 | Missing backup file | Run export on office PC first; check `$SyncFolder` matches USB path. |
 | `pg_restore failed` | PostgreSQL running; matching password in `server\.env`; retry after `DROP DATABASE server; CREATE DATABASE server;` in pgAdmin. |
 | Login OK but PDF blank | Re-import; ensure `documents\` was on the USB. |
+
+### DH laptop: database / login not working (office PC works)
+
+The DH laptop has its **own** PostgreSQL on `127.0.0.1`. The app will not see office data until import succeeds.
+
+| Symptom | What to do |
+|---------|------------|
+| `could not find driver` | On DH laptop: enable `pdo_pgsql` in `php.ini` (§3), restart API. |
+| `SQLSTATE[08006]` / connection refused | Start PostgreSQL service (Automatic). Run `scripts\check-database.bat`. |
+| Wrong password / authentication failed | Edit `server\.env` on the **DH laptop** — `DB_PASSWORD` must match **that laptop's** Postgres user, not the office PC. |
+| Login fails / "credentials" error | Empty database: run `import-sync-package.bat` after office export. Or run `php artisan db:seed --force` only for a test empty system. |
+| Dashboard empty but login works | Import not run or failed — re-export on office, re-import on DH. |
+| Same error as office ("Post Data is too Large") | Use `start-cpdo-system.bat` (loads `server\php.ini`) — see §15. |
+
+**DH laptop checklist (in order):**
+
+1. PostgreSQL installed and service **Running**.
+2. `server\.env` exists with correct `DB_PASSWORD` for **this** PC.
+3. Run `scripts\check-database.bat` — fix every **FAIL** line.
+4. USB plugged in; `sync-config.ps1` points to `package\server.backup`.
+5. Close app windows → `Import\import-sync-package.bat` → type `YES`.
+6. Run `check-database.bat` again (should show users and tables).
+7. `start-cpdo-system.bat` → `http://localhost:9000`.
+
+**Reset DH database and import again (pgAdmin):**
+
+```sql
+DROP DATABASE server;
+CREATE DATABASE server;
+```
+
+Then run `import-sync-package.bat` again.
 
 ---
 
@@ -418,11 +457,50 @@ Restart using `scripts\For Opening the System\start-cpdo-system.bat` (or reboot 
 - Enable `pdo_pgsql` in `php.ini`
 - Confirm PostgreSQL is running
 - Verify `server/.env` DB name, user, password
+- Run `scripts\check-database.bat` on the PC that fails (office vs DH — each has its own Postgres and `.env`)
+- **DH laptop:** you must import office data via USB (§12.5); fixing `.env` alone does not copy documents or users from the office PC
 
 ### `Failed to create document` / HTTP 500 on upload
 
 - Run: `php artisan migrate --force` (missing columns e.g. `uploaded_by`)
 - Check `server\storage\logs\laravel.log` for the exact error
+
+### `Post Data is too Large` (PDF upload / create document)
+
+This is **not a PostgreSQL error**. PHP rejects the HTTP request when the total upload (all PDFs + form fields) exceeds `post_max_size` (often **8M** by default).
+
+**Fix (recommended — use the project start script):**
+
+1. Always start the API with `scripts\For Opening the System\start-cpdo-system.bat` (or `_start-laravel.bat`). These run PHP with `server\php.ini` (`post_max_size=128M`, `upload_max_filesize=64M`).
+2. Close any old “CPDO Laravel API” terminal windows, then start again so the new limits apply.
+
+**If you start Laravel manually** (`php artisan serve` without `-c`), you must either:
+
+```powershell
+cd C:\Apps\cpdo-zoning-management-system\server
+php -c php.ini artisan serve --host=0.0.0.0 --port=8000
+```
+
+**or** edit the system `php.ini` used by CLI (find path with `php --ini`), set at least:
+
+```ini
+post_max_size = 128M
+upload_max_filesize = 64M
+max_file_uploads = 50
+```
+
+`post_max_size` must be **larger than the combined size** of every PDF in one submit plus the form fields. Restart the API after changing `php.ini`.
+
+**Verify active limits:**
+
+```powershell
+cd C:\Apps\cpdo-zoning-management-system\server
+php -c php.ini -r "echo 'post_max_size=' . ini_get('post_max_size') . PHP_EOL . 'upload_max_filesize=' . ini_get('upload_max_filesize');"
+```
+
+Expected: `post_max_size=128M` and `upload_max_filesize=64M`.
+
+**App limits:** Each PDF may be up to **64 MB**; up to **20 PDFs** per request (see `server/config/uploads.php` and optional `UPLOAD_MAX_FILE_MB` in `.env`).
 
 ### `php` or `npm` not recognized
 

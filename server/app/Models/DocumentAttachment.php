@@ -13,6 +13,7 @@ class DocumentAttachment extends Model
         'file_name',
         'file_type',
         'file_size',
+        'attachment_type',
     ];
 
     public function document()

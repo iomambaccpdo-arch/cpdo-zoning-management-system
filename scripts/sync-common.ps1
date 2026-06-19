@@ -104,6 +104,102 @@ function Get-CpdoDatabaseSettings {
     return $db
 }
 
+function Test-CpdoPostgresServiceRunning {
+    $service = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Status -eq "Running" } |
+        Select-Object -First 1
+
+    return [bool] $service
+}
+
+function Ensure-CpdoDatabaseExists {
+    param(
+        [hashtable] $Db
+    )
+
+    $psql = Find-CpdoPostgresTool -ToolName "psql"
+    $dbName = $Db.Database
+
+    if ($Db.Password) {
+        $env:PGPASSWORD = $Db.Password
+    }
+
+    try {
+        $exists = (& $psql -U $Db.Username -h $Db.Host -p $Db.Port -d postgres -tAc `
+            "SELECT 1 FROM pg_database WHERE datname = '$dbName'") -match "1"
+
+        if (-not $exists) {
+            Write-Host "Creating database '$dbName'..."
+            & $psql -U $Db.Username -h $Db.Host -p $Db.Port -d postgres -c "CREATE DATABASE `"$dbName`";"
+            if ($LASTEXITCODE -ne 0) {
+                throw "CREATE DATABASE failed (exit $LASTEXITCODE)."
+            }
+        }
+    }
+    finally {
+        Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-CpdoDatabaseConnection {
+    param([hashtable] $Db)
+
+    $psql = Find-CpdoPostgresTool -ToolName "psql"
+
+    if ($Db.Password) {
+        $env:PGPASSWORD = $Db.Password
+    }
+
+    try {
+        & $psql -U $Db.Username -h $Db.Host -p $Db.Port -d $Db.Database -c "SELECT 1" 2>&1 | Out-Null
+        return $LASTEXITCODE -eq 0
+    }
+    finally {
+        Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-CpdoDatabaseTableCount {
+    param([hashtable] $Db)
+
+    $psql = Find-CpdoPostgresTool -ToolName "psql"
+
+    if ($Db.Password) {
+        $env:PGPASSWORD = $Db.Password
+    }
+
+    try {
+        $count = & $psql -U $Db.Username -h $Db.Host -p $Db.Port -d $Db.Database -tAc `
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
+        return [int]$count
+    }
+    finally {
+        Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-CpdoDatabaseUserCount {
+    param([hashtable] $Db)
+
+    $psql = Find-CpdoPostgresTool -ToolName "psql"
+
+    if ($Db.Password) {
+        $env:PGPASSWORD = $Db.Password
+    }
+
+    try {
+        $count = & $psql -U $Db.Username -h $Db.Host -p $Db.Port -d $Db.Database -tAc `
+            "SELECT COUNT(*) FROM users"
+        return [int]$count
+    }
+    catch {
+        return 0
+    }
+    finally {
+        Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+    }
+}
+
 function Find-CpdoPostgresTool {
     param([string] $ToolName)
 

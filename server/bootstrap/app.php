@@ -13,6 +13,9 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->statefulApi();
+        $middleware->api(prepend: [
+            \App\Http\Middleware\EnsureRequestWithinPostLimits::class,
+        ]);
         $middleware->alias([
             'permission' => \App\Http\Middleware\CheckPermission::class,
         ]);

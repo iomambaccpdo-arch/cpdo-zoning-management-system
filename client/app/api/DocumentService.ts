@@ -22,6 +22,7 @@ export interface DocumentAttachment {
     date_of_application: string;
     due_date: string | null;
     project_type?: { id: number; name: string };
+    specific_project_type?: { id: number; name: string } | null;
     barangay?: { id: number; name: string };
     purok?: { id: number; name: string };
     landmark: string;
@@ -35,6 +36,7 @@ export interface Document {
   zoning_id: number;
   zoning_application_no: string;
   project_type_id: number;
+  specific_project_type_id?: number | null;
   date_of_application: string;
   due_date: string | null;
   applicant_name: string;
@@ -49,9 +51,11 @@ export interface Document {
   lot_area: string;
   storey: string;
   mezanine: string | null;
+  status?: 'pending' | 'processing' | 'completed' | 'finalized';
   created_at: string;
   zoning?: { id: number; name: string };
   project_type?: { id: number; name: string };
+  specific_project_type?: { id: number; name: string } | null;
   barangay?: { id: number; name: string };
   purok?: { id: number; name: string };
   routed_to_users?: {
@@ -82,10 +86,23 @@ export interface DashboardAttachment {
 export interface DashboardData {
   monthly_counts: DashboardMonthCount[];
   recent_attachments: DashboardAttachment[];
+  overdue_count: number;
+}
+
+export interface OverdueDocument extends Document {
+  days_overdue: number;
 }
 
 export interface PaginatedDocuments {
   data: Document[];
+  current_page: number;
+  last_page: number;
+  per_page: number;
+  total: number;
+}
+
+export interface PaginatedOverdueDocuments {
+  data: OverdueDocument[];
   current_page: number;
   last_page: number;
   per_page: number;
@@ -130,6 +147,17 @@ export class DocumentService {
   }) {
     const response = await axiosInstance.get<PaginatedDocuments>(
       "/api/documents",
+      { params },
+    );
+    return response.data;
+  }
+
+  static async getOverdueDocuments(params?: {
+    page?: number;
+    per_page?: number;
+  }) {
+    const response = await axiosInstance.get<PaginatedOverdueDocuments>(
+      "/api/documents/overdue",
       { params },
     );
     return response.data;
@@ -214,6 +242,39 @@ export class DocumentService {
 
   static async deleteAttachment(id: number) {
     const response = await axiosInstance.delete(`/api/attachments/${id}`);
+    return response.data;
+  }
+
+  static async extendDueDate(documentId: number, daysToAdd: number, reason: string) {
+    const response = await axiosInstance.post(`/api/documents/${documentId}/extend-due-date`, {
+      daysToAdd,
+      reason,
+    });
+    return response.data;
+  }
+
+  static async updateStatus(documentId: number, status: string) {
+    const response = await axiosInstance.put(`/api/documents/${documentId}/status`, {
+      status,
+    });
+    return response.data;
+  }
+
+  static async updateOic(documentId: number, userId: number) {
+    const response = await axiosInstance.put(`/api/documents/${documentId}/oic`, {
+      user_id: userId,
+    });
+    return response.data;
+  }
+
+  static async uploadOicAttachment(documentId: number, file: File) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await axiosInstance.post(`/api/documents/${documentId}/oic-attachment`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
     return response.data;
   }
 }

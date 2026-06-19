@@ -12,6 +12,7 @@ class Document extends Model
         'zoning_id',
         'zoning_application_no',
         'project_type_id',
+        'specific_project_type_id',
         'date_of_application',
         'due_date',
         'applicant_name',
@@ -27,6 +28,7 @@ class Document extends Model
         'lot_area',
         'storey',
         'mezanine',
+        'status',
     ];
 
     public function zoning()
@@ -37,6 +39,11 @@ class Document extends Model
     public function projectType()
     {
         return $this->belongsTo(ProjectType::class);
+    }
+
+    public function specificProjectType()
+    {
+        return $this->belongsTo(SpecificProjectType::class);
     }
 
     public function barangay()
@@ -79,5 +86,10 @@ class Document extends Model
     public function attachments()
     {
         return $this->hasMany(DocumentAttachment::class);
+    }
+
+    public function dueDateExtensions()
+    {
+        return $this->hasMany(DueDateExtension::class)->latest();
     }
 }

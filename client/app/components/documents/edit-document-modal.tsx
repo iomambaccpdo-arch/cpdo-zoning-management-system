@@ -39,10 +39,11 @@ const formSchema = z.object({
     zoning: z.string().min(1),
     zoningApplicationNo: z.string().min(1),
     typeOfProject: z.string().min(1),
+    specificProjectType: z.string().min(1),
     dueDate: z.string().optional(),
     applicantName: z.string().min(1),
     assistedBy: z.string().optional(),
-    oic: z.string().min(1),
+    oic: z.string().optional(),
     barangay: z.string().min(1),
     purok: z.string().min(1),
     landmark: z.string().min(1),
@@ -72,6 +73,7 @@ export function EditDocumentModal({ documentId, open, onClose }: EditDocumentMod
             zoning: "",
             zoningApplicationNo: "",
             typeOfProject: "",
+            specificProjectType: "",
             dueDate: "",
             applicantName: "",
             assistedBy: "",
@@ -124,6 +126,7 @@ export function EditDocumentModal({ documentId, open, onClose }: EditDocumentMod
             zoning: document.zoning_id.toString(),
             zoningApplicationNo: document.zoning_application_no,
             typeOfProject: document.project_type_id.toString(),
+            specificProjectType: document.specific_project_type_id ? document.specific_project_type_id.toString() : "N/A",
             dueDate: document.due_date ?? "",
             applicantName: document.applicant_name,
             assistedBy: document.assisted_by ?? "",
@@ -151,6 +154,7 @@ export function EditDocumentModal({ documentId, open, onClose }: EditDocumentMod
             formData.append("zoning", values.zoning)
             formData.append("zoningApplicationNo", values.zoningApplicationNo)
             formData.append("typeOfProject", values.typeOfProject)
+            formData.append("specificProjectType", values.specificProjectType)
             if (values.dueDate) {
                 formData.append("dueDate", values.dueDate)
             }
@@ -158,7 +162,9 @@ export function EditDocumentModal({ documentId, open, onClose }: EditDocumentMod
             if (values.assistedBy) {
                 formData.append("assistedBy", values.assistedBy)
             }
-            formData.append("oic", values.oic)
+            if (values.oic) {
+                formData.append("oic", values.oic)
+            }
             formData.append("barangay", values.barangay)
             formData.append("purok", values.purok)
             formData.append("landmark", values.landmark)
@@ -248,6 +254,7 @@ export function EditDocumentModal({ documentId, open, onClose }: EditDocumentMod
                                                 field.onChange(value)
                                                 setSelectedZoningId(value)
                                                 form.setValue("typeOfProject", "")
+                                                form.setValue("specificProjectType", "")
                                             }} value={field.value}>
                                                 <FormControl>
                                                     <SelectTrigger><SelectValue placeholder="Select zoning" /></SelectTrigger>
@@ -270,7 +277,18 @@ export function EditDocumentModal({ documentId, open, onClose }: EditDocumentMod
                                     render={({ field }) => (
                                         <FormItem>
                                             <FormLabel>Type of Project</FormLabel>
-                                            <Select onValueChange={field.onChange} value={field.value}>
+                                            <Select
+                                                onValueChange={(val) => {
+                                                    field.onChange(val)
+                                                    const pt = selectedZoning?.project_types?.find(p => p.id.toString() === val)
+                                                    if (pt && pt.specific_project_types && pt.specific_project_types.length > 0) {
+                                                        form.setValue("specificProjectType", "")
+                                                    } else {
+                                                        form.setValue("specificProjectType", "N/A")
+                                                    }
+                                                }}
+                                                value={field.value}
+                                            >
                                                 <FormControl>
                                                     <SelectTrigger><SelectValue placeholder="Select project type" /></SelectTrigger>
                                                 </FormControl>
@@ -285,6 +303,40 @@ export function EditDocumentModal({ documentId, open, onClose }: EditDocumentMod
                                             <FormMessage />
                                         </FormItem>
                                     )}
+                                />
+                                <FormField
+                                    control={form.control}
+                                    name="specificProjectType"
+                                    render={({ field }) => {
+                                        const selectedProjectTypeId = form.watch("typeOfProject")
+                                        const selectedProjectType = selectedZoning?.project_types?.find(p => p.id.toString() === selectedProjectTypeId)
+                                        const specificProjectTypes = selectedProjectType?.specific_project_types ?? []
+
+                                        return (
+                                            <FormItem>
+                                                <FormLabel>Specific Project Type</FormLabel>
+                                                <Select onValueChange={field.onChange} value={field.value} disabled={!selectedProjectTypeId}>
+                                                    <FormControl>
+                                                        <SelectTrigger>
+                                                            <SelectValue placeholder={!selectedProjectTypeId ? "Select Type of Project first" : specificProjectTypes.length === 0 ? "N/A" : "Select specific project type"} />
+                                                        </SelectTrigger>
+                                                    </FormControl>
+                                                    <SelectContent>
+                                                        {specificProjectTypes.length === 0 ? (
+                                                            <SelectItem value="N/A">N/A</SelectItem>
+                                                        ) : (
+                                                            specificProjectTypes.map((spt) => (
+                                                                <SelectItem key={spt.id} value={spt.id.toString()}>
+                                                                    {spt.name}
+                                                                </SelectItem>
+                                                            ))
+                                                        )}
+                                                    </SelectContent>
+                                                </Select>
+                                                <FormMessage />
+                                            </FormItem>
+                                        )
+                                    }}
                                 />
                                 <FormField
                                     control={form.control}
@@ -311,13 +363,32 @@ export function EditDocumentModal({ documentId, open, onClose }: EditDocumentMod
                                 <FormField
                                     control={form.control}
                                     name="oic"
-                                    render={({ field }) => (
-                                        <FormItem>
-                                            <FormLabel>OIC</FormLabel>
-                                            <FormControl><Input {...field} /></FormControl>
-                                            <FormMessage />
-                                        </FormItem>
-                                    )}
+                                    render={({ field }) => {
+                                        const validUsers = users?.data?.filter(u => !u.roles.some((r: any) => r.name === 'Super Admin')) || []
+                                        return (
+                                            <FormItem>
+                                                <FormLabel>OIC</FormLabel>
+                                                <Select onValueChange={field.onChange} value={field.value ?? ""}>
+                                                    <FormControl>
+                                                        <SelectTrigger>
+                                                            <SelectValue placeholder="Select OIC" />
+                                                        </SelectTrigger>
+                                                    </FormControl>
+                                                    <SelectContent>
+                                                        {validUsers.map(user => {
+                                                            const fullName = `${user.first_name} ${user.last_name}`
+                                                            return (
+                                                                <SelectItem key={user.id} value={fullName}>
+                                                                    {fullName}{user.designation ? ` — ${user.designation}` : ""}
+                                                                </SelectItem>
+                                                            )
+                                                        })}
+                                                    </SelectContent>
+                                                </Select>
+                                                <FormMessage />
+                                            </FormItem>
+                                        )
+                                    }}
                                 />
                                 <FormField
                                     control={form.control}

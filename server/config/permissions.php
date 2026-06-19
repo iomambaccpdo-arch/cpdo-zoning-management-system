@@ -3,20 +3,20 @@
 return [
     'list' => [
         'Dashboard' => ['view'],
-        'Files' => ['view', 'create', 'update', 'delete'],
+        'Files' => ['view', 'create', 'update', 'delete', 'extend_due_date'],
         'Accounts' => ['view', 'create', 'update', 'delete'],
         'Activity Logs' => ['view'],
     ],
     'roles' => [
         'super_admin' => [
             'Dashboard' => ['view'],
-            'Files' => ['view', 'create', 'update', 'delete'],
+            'Files' => ['view', 'create', 'update', 'delete', 'extend_due_date'],
             'Accounts' => ['view', 'create', 'update', 'delete'],
             'Activity Logs' => ['view'],
         ],
         'coordinator' => [
             'Dashboard' => ['view'],
-            'Files' => ['view', 'create', 'update', 'delete'],
+            'Files' => ['view', 'create', 'update', 'delete', 'extend_due_date'],
             'Accounts' => ['view', 'create', 'update', 'delete'],
             'Activity Logs' => ['view'],
         ],

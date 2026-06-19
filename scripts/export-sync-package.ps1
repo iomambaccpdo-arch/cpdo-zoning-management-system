@@ -3,7 +3,7 @@
 
 $ErrorActionPreference = "Stop"
 $ScriptFileDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$commonPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptFileDir "..\sync-common.ps1"))
+$commonPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptFileDir "sync-common.ps1"))
 . $commonPath
 
 $ScriptsDir = Get-CpdoScriptsRoot -ScriptFileDir $ScriptFileDir

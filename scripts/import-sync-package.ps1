@@ -3,7 +3,7 @@
 
 $ErrorActionPreference = "Stop"
 $ScriptFileDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$commonPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptFileDir "..\sync-common.ps1"))
+$commonPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptFileDir "sync-common.ps1"))
 . $commonPath
 
 $ScriptsDir = Get-CpdoScriptsRoot -ScriptFileDir $ScriptFileDir
@@ -48,11 +48,25 @@ Write-Host ('Database: {0} on {1}:{2}' -f $db.Database, $db.Host, $db.Port)
 Write-Host "Package:  $packageDir"
 Write-Host ""
 
+if (-not (Test-CpdoPostgresServiceRunning)) {
+    throw "PostgreSQL service is not running. Start it in services.msc (postgresql-x64-*) then run import again."
+}
+
+if (-not (Test-CpdoDatabaseConnection -Db $db)) {
+    Write-Host ""
+    Write-Host "Cannot connect with server\.env on THIS laptop." -ForegroundColor Red
+    Write-Host "Fix DB_PASSWORD (password for PostgreSQL on the DH laptop), ensure database exists, then retry."
+    Write-Host "Run scripts\check-database.bat for details."
+    throw "Database connection failed before import."
+}
+
 if ($db.Password) {
     $env:PGPASSWORD = $db.Password
 }
 
 try {
+    Ensure-CpdoDatabaseExists -Db $db
+
     Write-Host "Restoring PostgreSQL (harmless warnings are OK)..."
     & $pgRestore -U $db.Username -h $db.Host -p $db.Port -d $db.Database --clean --if-exists $backupFile 2>&1 | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -ne 0) {
@@ -70,6 +84,29 @@ try {
     Get-ChildItem -LiteralPath $documentsDest -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
     if (Test-Path -LiteralPath $documentsSrc) {
         Copy-Item -Path (Join-Path $documentsSrc "*") -Destination $documentsDest -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    $artisanDir = Join-Path $projectRoot "server"
+
+    Write-Host "Applying any pending Laravel migrations..."
+    Push-Location $artisanDir
+    try {
+        php artisan migrate --force 2>&1 | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) {
+            throw "php artisan migrate --force failed (exit $LASTEXITCODE)."
+        }
+    }
+    finally {
+        Pop-Location
+    }
+
+    $userCount = Get-CpdoDatabaseUserCount -Db $db
+    if ($userCount -lt 1) {
+        Write-Host ""
+        Write-Host "WARNING: No users found after import. Login will fail." -ForegroundColor Yellow
+        Write-Host "Re-run import after DROP DATABASE server; CREATE DATABASE server; in pgAdmin."
+    } else {
+        Write-Host "Verified: $userCount login account(s) in database."
     }
 
     Write-Host ""

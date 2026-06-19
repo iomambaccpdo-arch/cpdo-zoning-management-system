@@ -40,6 +40,7 @@ export function ViewDocumentTable({ attachment, open, onClose }: ViewDocumentTab
         { label: "Document Title", value: doc.document_title },
         { label: "Application No.", value: doc.zoning_application_no },
         { label: "Type of Project", value: doc.project_type?.name },
+        { label: "Specific Project Type", value: doc.specific_project_type?.name },
         { label: "Applicant Name", value: doc.applicant_name },
         {
             label: "Date of Application",

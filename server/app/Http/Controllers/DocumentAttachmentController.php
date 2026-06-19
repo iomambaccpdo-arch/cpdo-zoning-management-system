@@ -20,8 +20,9 @@ class DocumentAttachmentController extends Controller
 
         $query = DocumentAttachment::with([
             'uploader:id,first_name,last_name',
-            'document:id,document_title,zoning_application_no,applicant_name,date_of_application,due_date,project_type_id,barangay_id,purok_id,landmark',
+            'document:id,document_title,zoning_application_no,applicant_name,date_of_application,due_date,project_type_id,specific_project_type_id,barangay_id,purok_id,landmark',
             'document.projectType:id,name',
+            'document.specificProjectType:id,name',
             'document.barangay:id,name',
             'document.purok:id,name',
             'document.routedToUsers:id,first_name,last_name',

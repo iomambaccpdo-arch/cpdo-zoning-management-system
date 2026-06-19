@@ -1,7 +1,7 @@
 import * as React from "react"
 import { format } from "date-fns"
 import { useQuery } from "@tanstack/react-query"
-import { FileText, X, ChevronLeft, ChevronRight, Loader2, Download, Eye, Pencil, FolderOpen, Trash2, Search } from "lucide-react"
+import { FileText, X, ChevronLeft, ChevronRight, Loader2, Download, Eye, Pencil, FolderOpen, Trash2, Search, AlertTriangle } from "lucide-react"
 import { Input } from "~/components/ui/input"
 import { DocumentService } from "~/api/DocumentService"
 import type { DashboardMonthCount } from "~/api/DocumentService"
@@ -14,6 +14,7 @@ import {
     TableRow,
 } from "~/components/ui/table"
 import { Button } from "~/components/ui/button"
+import { Badge } from "~/components/ui/badge"
 import { Skeleton } from "~/components/ui/skeleton"
 import { PdfPreviewModal } from "~/components/files/pdf-preview-modal"
 import { EditDocumentModal } from "~/components/documents/edit-document-modal"
@@ -25,6 +26,30 @@ import { useAuthStore } from "~/store/auth"
 const CURRENT_YEAR = new Date().getFullYear()
 const CURRENT_MONTH = new Date().getMonth() + 1 // 1-indexed
 const YEAR_OPTIONS = Array.from({ length: 6 }, (_, i) => CURRENT_YEAR - i)
+
+type DashboardTab = "overview" | "overdue"
+
+const STATUS_LABELS: Record<string, string> = {
+    pending: "Pending",
+    processing: "Processing",
+    completed: "Completed",
+    finalized: "Finalized",
+}
+
+function statusBadgeClass(status?: string) {
+    switch (status) {
+        case "pending":
+            return "bg-amber-100 text-amber-800 border-amber-200"
+        case "processing":
+            return "bg-blue-100 text-blue-800 border-blue-200"
+        case "completed":
+            return "bg-emerald-100 text-emerald-800 border-emerald-200"
+        case "finalized":
+            return "bg-zinc-100 text-zinc-700 border-zinc-200"
+        default:
+            return "bg-zinc-100 text-zinc-700 border-zinc-200"
+    }
+}
 
 type DocumentsTableProps = {
     year: number
@@ -265,9 +290,206 @@ function DocumentsTable({
     )
 }
 
+type OverdueApplicationsTableProps = {
+    canViewFiles: boolean
+    canEditDocument: boolean
+    canDeleteDocument: boolean
+    onEditDocument: (documentId: number) => void
+    onManageAttachments: (documentId: number) => void
+    onDeleteDocument: (documentId: number, documentTitle: string) => void
+}
+
+function OverdueApplicationsTable({
+    canViewFiles,
+    canEditDocument,
+    canDeleteDocument,
+    onEditDocument,
+    onManageAttachments,
+    onDeleteDocument,
+}: OverdueApplicationsTableProps) {
+    const [page, setPage] = React.useState(1)
+
+    const { data, isLoading } = useQuery({
+        queryKey: ["documents", "overdue", page],
+        queryFn: () =>
+            DocumentService.getOverdueDocuments({
+                page,
+                per_page: 10,
+            }),
+    })
+
+    const docs = data?.data ?? []
+    const totalPages = data?.last_page ?? 1
+    const total = data?.total ?? 0
+
+    return (
+        <div className="space-y-4">
+            {total > 0 && (
+                <div className="flex items-start gap-3 rounded-md border border-red-200 bg-red-50 px-4 py-3">
+                    <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+                    <div>
+                        <p className="text-[13px] font-semibold text-red-800">
+                            Action required — {total} overdue application{total === 1 ? "" : "s"}
+                        </p>
+                        <p className="text-[12px] text-red-700 mt-0.5">
+                            The following applications have passed their due date and are still pending or in progress.
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            <div className="rounded-md border bg-white shadow-sm overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 border-b bg-zinc-50 gap-3">
+                    <div className="min-w-0">
+                        <p className="text-[11px] text-zinc-400 uppercase tracking-wide font-medium">
+                            Monitoring
+                        </p>
+                        <p className="text-[14px] font-bold text-zinc-800 truncate">
+                            Overdue Applications
+                        </p>
+                        <p className="text-[12px] text-zinc-500 mt-0.5">
+                            {isLoading ? "..." : total} application{total === 1 ? "" : "s"} past due date
+                        </p>
+                    </div>
+                </div>
+
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead className="text-[12px] font-semibold">Applicant</TableHead>
+                            <TableHead className="text-[12px] font-semibold">App No.</TableHead>
+                            <TableHead className="text-[12px] font-semibold">Due Date</TableHead>
+                            <TableHead className="text-[12px] font-semibold">Days Overdue</TableHead>
+                            <TableHead className="text-[12px] font-semibold">Status</TableHead>
+                            <TableHead className="text-[12px] font-semibold text-right">Actions</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {isLoading &&
+                            Array.from({ length: 4 }).map((_, i) => (
+                                <TableRow key={i}>
+                                    {Array.from({ length: 6 }).map((_, j) => (
+                                        <TableCell key={j}>
+                                            <Skeleton className="h-4 w-full" />
+                                        </TableCell>
+                                    ))}
+                                </TableRow>
+                            ))}
+                        {!isLoading && docs.length === 0 && (
+                            <TableRow>
+                                <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">
+                                    <FileText className="h-7 w-7 mx-auto mb-2 opacity-30" />
+                                    <p className="text-[13px]">No overdue applications. All documents are on track.</p>
+                                </TableCell>
+                            </TableRow>
+                        )}
+                        {!isLoading &&
+                            docs.map((doc) => (
+                                <TableRow
+                                    key={doc.id}
+                                    className="hover:bg-red-50/40 text-[13px] border-l-4 border-l-red-500"
+                                >
+                                    <TableCell className="font-medium max-w-[180px] truncate">
+                                        {doc.applicant_name}
+                                    </TableCell>
+                                    <TableCell className="font-mono text-[12px]">
+                                        {doc.zoning_application_no}
+                                    </TableCell>
+                                    <TableCell className="text-red-700 font-medium whitespace-nowrap">
+                                        {doc.due_date
+                                            ? format(new Date(doc.due_date), "MMM d, yyyy")
+                                            : "—"}
+                                    </TableCell>
+                                    <TableCell>
+                                        <Badge
+                                            variant="destructive"
+                                            className="text-[11px] font-semibold"
+                                        >
+                                            {doc.days_overdue} day{doc.days_overdue === 1 ? "" : "s"}
+                                        </Badge>
+                                    </TableCell>
+                                    <TableCell>
+                                        <Badge
+                                            variant="outline"
+                                            className={`text-[11px] capitalize ${statusBadgeClass(doc.status)}`}
+                                        >
+                                            {STATUS_LABELS[doc.status ?? "pending"] ?? doc.status}
+                                        </Badge>
+                                    </TableCell>
+                                    <TableCell className="text-right whitespace-nowrap">
+                                        {canEditDocument && (
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 w-7 p-0 text-emerald-700 hover:bg-emerald-50"
+                                                onClick={() => onEditDocument(doc.id)}
+                                                title="Edit Document"
+                                            >
+                                                <Pencil className="h-4 w-4" />
+                                            </Button>
+                                        )}
+                                        {canViewFiles && (
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 w-7 p-0 text-purple-700 hover:bg-purple-50"
+                                                onClick={() => onManageAttachments(doc.id)}
+                                                title="Manage Attachments"
+                                            >
+                                                <FolderOpen className="h-4 w-4" />
+                                            </Button>
+                                        )}
+                                        {canDeleteDocument && (
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 w-7 p-0 text-red-600 hover:text-red-800 hover:bg-red-50"
+                                                onClick={() => onDeleteDocument(doc.id, doc.document_title)}
+                                                title="Delete Document"
+                                            >
+                                                <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                        )}
+                                    </TableCell>
+                                </TableRow>
+                            ))}
+                    </TableBody>
+                </Table>
+
+                {totalPages > 1 && (
+                    <div className="flex items-center justify-end gap-2 px-4 py-2 border-t">
+                        <span className="text-xs text-muted-foreground">
+                            Page {data?.current_page} of {totalPages}
+                        </span>
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 w-7 p-0"
+                            disabled={page <= 1}
+                            onClick={() => setPage((p) => p - 1)}
+                        >
+                            <ChevronLeft className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 w-7 p-0"
+                            disabled={page >= totalPages}
+                            onClick={() => setPage((p) => p + 1)}
+                        >
+                            <ChevronRight className="h-3.5 w-3.5" />
+                        </Button>
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}
+
 // ─── Main Dashboard ──────────────────────────────────────────────────────────
 export default function Dashboard() {
     const { user } = useAuthStore()
+    const [activeTab, setActiveTab] = React.useState<DashboardTab>("overview")
     const [selectedYear, setSelectedYear] = React.useState(CURRENT_YEAR)
     const [selectedMonth, setSelectedMonth] = React.useState<DashboardMonthCount | null>(null)
     const [docSearch, setDocSearch] = React.useState("")
@@ -290,6 +512,7 @@ export default function Dashboard() {
 
     const monthlyCounts = data?.monthly_counts ?? []
     const recentAttachments = data?.recent_attachments ?? []
+    const overdueCount = data?.overdue_count ?? 0
 
     const canViewFiles = user?.roles?.some((role) =>
         role.permissions?.some((p: any) => p.resource === "Files" && p.name === "view")
@@ -327,6 +550,54 @@ export default function Dashboard() {
 
             <div className="flex-1 overflow-auto p-5 space-y-6">
 
+                {/* ── Dashboard tabs ── */}
+                <div className="flex items-center gap-1 border-b border-zinc-200">
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("overview")}
+                        className={`px-4 py-2 text-[13px] font-medium border-b-2 -mb-px transition-colors ${
+                            activeTab === "overview"
+                                ? "border-green-600 text-green-700"
+                                : "border-transparent text-zinc-500 hover:text-zinc-700"
+                        }`}
+                    >
+                        Overview
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("overdue")}
+                        className={`flex items-center gap-2 px-4 py-2 text-[13px] font-medium border-b-2 -mb-px transition-colors ${
+                            activeTab === "overdue"
+                                ? "border-red-600 text-red-700"
+                                : "border-transparent text-zinc-500 hover:text-zinc-700"
+                        }`}
+                    >
+                        Overdue Applications
+                        {overdueCount > 0 && (
+                            <Badge
+                                variant="destructive"
+                                className="h-5 min-w-5 px-1.5 text-[10px] font-bold"
+                            >
+                                {overdueCount}
+                            </Badge>
+                        )}
+                    </button>
+                </div>
+
+                {activeTab === "overdue" ? (
+                    <OverdueApplicationsTable
+                        canViewFiles={canViewFiles}
+                        canEditDocument={canEditDocument}
+                        canDeleteDocument={canDeleteDocument}
+                        onEditDocument={(documentId) => setEditDocumentId(documentId)}
+                        onManageAttachments={(documentId) => setManageDocumentId(documentId)}
+                        onDeleteDocument={(documentId, documentTitle) => {
+                            setDeleteDocumentId(documentId)
+                            setDeleteDocumentTitle(documentTitle)
+                        }}
+                    />
+                ) : (
+                <>
                 {/* ── Section: Document / Months ── */}
                 <div>
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
@@ -520,6 +791,9 @@ export default function Dashboard() {
                         </Table>
                     </div>
                 </div>
+
+                </>
+                )}
 
             </div>
 

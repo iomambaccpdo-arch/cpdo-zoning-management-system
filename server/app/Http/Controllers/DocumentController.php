@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Jobs\SendDocumentRoutedEmail;
 use App\Models\Document;
 use App\Models\DocumentAttachment;
+use App\Models\DueDateExtension;
 use App\Models\User;
 use App\Support\ActivityLogger;
 use Carbon\Carbon;
@@ -44,9 +45,16 @@ class DocumentController extends Controller
             ->limit(10)
             ->get(['id', 'document_id', 'file_name', 'file_type', 'file_size', 'created_at']);
 
+        $overdueCount = Document::query()
+            ->whereNotNull('due_date')
+            ->whereDate('due_date', '<', Carbon::today())
+            ->whereIn('status', ['pending', 'processing'])
+            ->count();
+
         return response()->json([
             'monthly_counts' => $months,
             'recent_attachments' => $recentAttachments,
+            'overdue_count' => $overdueCount,
         ]);
     }
 
@@ -79,10 +87,11 @@ class DocumentController extends Controller
             'zoning' => 'required|exists:zonings,id',
             'zoningApplicationNo' => 'required|string',
             'typeOfProject' => 'required|exists:project_types,id',
+            'specificProjectType' => $this->specificProjectTypeRule($request),
             'dueDate' => 'nullable|string',
             'applicantName' => 'required|string',
             'assistedBy' => 'nullable|string',
-            'oic' => 'required|string',
+            'oic' => 'nullable|string',
             'barangay' => 'required|exists:barangays,id',
             'purok' => 'required|exists:puroks,id',
             'landmark' => 'required|string',
@@ -93,8 +102,7 @@ class DocumentController extends Controller
             'mezanine' => 'nullable|string',
             'routedTo' => 'required|array',
             'routedTo.*' => 'exists:users,id',
-            'files' => 'nullable|array',
-            'files.*' => 'file|mimes:pdf',
+            ...$this->pdfUploadRules(required: true),
         ]);
 
         try {
@@ -106,12 +114,13 @@ class DocumentController extends Controller
                 'zoning_id' => $validatedData['zoning'],
                 'zoning_application_no' => $validatedData['zoningApplicationNo'],
                 'project_type_id' => $validatedData['typeOfProject'],
+                'specific_project_type_id' => $validatedData['specificProjectType'] === 'N/A' ? null : (int) $validatedData['specificProjectType'],
                 'date_of_application' => Carbon::now()->format('Y-m-d'),
                 'due_date' => $validatedData['dueDate'] ? Carbon::parse($validatedData['dueDate'])->format('Y-m-d') : null,
                 'applicant_name' => $validatedData['applicantName'],
                 ...$this->receivedByFields(),
                 'assisted_by' => $validatedData['assistedBy'] ?? null,
-                'oic' => $validatedData['oic'],
+                'oic' => $validatedData['oic'] ?? '',
                 'barangay_id' => $validatedData['barangay'],
                 'purok_id' => $validatedData['purok'],
                 'landmark' => $validatedData['landmark'],
@@ -128,9 +137,7 @@ class DocumentController extends Controller
             }
 
             // 3. Process File Uploads
-            if ($request->hasFile('files')) {
-                $this->storeUploadedFiles($document, $request->file('files'));
-            }
+            $this->storeUploadedFiles($document, $request->file('files'));
 
             DB::commit();
 
@@ -171,7 +178,7 @@ class DocumentController extends Controller
         $year = $request->query('year');
         $month = $request->query('month');
 
-        $query = Document::with(['zoning', 'projectType', 'barangay', 'purok', 'routedToUsers', 'attachments', 'receivedByUser'])
+        $query = Document::with(['zoning', 'projectType', 'specificProjectType', 'barangay', 'purok', 'routedToUsers', 'attachments', 'receivedByUser'])
             ->latest();
 
         if ($search) {
@@ -185,6 +192,9 @@ class DocumentController extends Controller
                     ->orWhere('landmark', 'like', "%{$search}%")
                     ->orWhereHas('projectType', function ($pq) use ($search) {
                         $pq->where('name', 'like', "%{$search}%");
+                    })
+                    ->orWhereHas('specificProjectType', function ($spq) use ($search) {
+                        $spq->where('name', 'like', "%{$search}%");
                     })
                     ->orWhereHas('barangay', function ($bq) use ($search) {
                         $bq->where('name', 'like', "%{$search}%");
@@ -211,12 +221,35 @@ class DocumentController extends Controller
         return response()->json($query->paginate($perPage));
     }
 
+    public function overdue(Request $request)
+    {
+        $perPage = (int) $request->query('per_page', 15);
+        $today = Carbon::today();
+
+        $paginator = Document::query()
+            ->whereNotNull('due_date')
+            ->whereDate('due_date', '<', $today)
+            ->whereIn('status', ['pending', 'processing'])
+            ->with(['projectType', 'barangay', 'purok'])
+            ->orderBy('due_date')
+            ->paginate($perPage);
+
+        $paginator->getCollection()->transform(function (Document $document) use ($today) {
+            $document->days_overdue = Carbon::parse($document->due_date)->diffInDays($today);
+
+            return $document;
+        });
+
+        return response()->json($paginator);
+    }
+
     public function show(Document $document)
     {
         return response()->json(
             $document->load([
                 'zoning',
                 'projectType',
+                'specificProjectType',
                 'barangay',
                 'purok',
                 'routedToUsers',
@@ -239,8 +272,8 @@ class DocumentController extends Controller
     public function uploadAttachments(Request $request, Document $document)
     {
         $request->validate([
-            'files' => 'required|array|min:1',
-            'files.*' => 'file|mimes:pdf',
+            'files' => 'required|array|min:1|max:'.config('uploads.max_files_per_request'),
+            'files.*' => 'file|mimes:pdf|max:'.config('uploads.max_file_size_kb'),
         ]);
 
         try {
@@ -278,6 +311,7 @@ class DocumentController extends Controller
             'zoning' => 'required|exists:zonings,id',
             'zoningApplicationNo' => 'required|string',
             'typeOfProject' => 'required|exists:project_types,id',
+            'specificProjectType' => $this->specificProjectTypeRule($request),
             'dueDate' => 'nullable|string',
             'applicantName' => 'required|string',
             'assistedBy' => 'nullable|string',
@@ -292,8 +326,7 @@ class DocumentController extends Controller
             'mezanine' => 'nullable|string',
             'routedTo' => 'required|array',
             'routedTo.*' => 'exists:users,id',
-            'files' => 'nullable|array',
-            'files.*' => 'file|mimes:pdf',
+            ...$this->pdfUploadRules(),
         ]);
 
         try {
@@ -304,6 +337,7 @@ class DocumentController extends Controller
                 'zoning_id' => $validatedData['zoning'],
                 'zoning_application_no' => $validatedData['zoningApplicationNo'],
                 'project_type_id' => $validatedData['typeOfProject'],
+                'specific_project_type_id' => $validatedData['specificProjectType'] === 'N/A' ? null : (int) $validatedData['specificProjectType'],
                 'date_of_application' => Carbon::now()->format('Y-m-d'),
                 'due_date' => isset($validatedData['dueDate']) ? Carbon::parse($validatedData['dueDate'])->format('Y-m-d') : null,
                 'applicant_name' => $validatedData['applicantName'],
@@ -339,7 +373,7 @@ class DocumentController extends Controller
 
             return response()->json([
                 'message' => 'Document updated successfully.',
-                'document' => $document->load(['zoning', 'projectType', 'barangay', 'purok', 'routedToUsers', 'attachments', 'receivedByUser']),
+                'document' => $document->load(['zoning', 'projectType', 'specificProjectType', 'barangay', 'purok', 'routedToUsers', 'attachments', 'receivedByUser']),
             ]);
 
         } catch (\Exception $e) {
@@ -376,20 +410,24 @@ class DocumentController extends Controller
 
     public function downloadAttachment(DocumentAttachment $attachment)
     {
-        if (! Storage::disk('local')->exists($attachment->file_path)) {
+        $path = $attachment->absolutePath();
+
+        if ($path === null) {
             return response()->json(['message' => 'File not found on server.'], 404);
         }
 
-        return Storage::disk('local')->download($attachment->file_path, $attachment->file_name);
+        return response()->download($path, $attachment->file_name);
     }
 
     public function previewAttachment(DocumentAttachment $attachment)
     {
-        if (! Storage::disk('local')->exists($attachment->file_path)) {
+        $path = $attachment->absolutePath();
+
+        if ($path === null) {
             return response()->json(['message' => 'File not found on server.'], 404);
         }
 
-        return Storage::disk('local')->response($attachment->file_path);
+        return response()->file($path);
     }
 
     public function deleteAttachment(DocumentAttachment $attachment)
@@ -407,6 +445,23 @@ class DocumentController extends Controller
     /**
      * @return array{received_by: string, received_by_user_id: int}
      */
+    /**
+     * @return array<string, string>
+     */
+    private function pdfUploadRules(bool $required = false): array
+    {
+        $maxKb = config('uploads.max_file_size_kb');
+        $maxFiles = config('uploads.max_files_per_request');
+        $filesRule = $required
+            ? "required|array|min:1|max:{$maxFiles}"
+            : "nullable|array|max:{$maxFiles}";
+
+        return [
+            'files' => $filesRule,
+            'files.*' => "file|mimes:pdf|max:{$maxKb}",
+        ];
+    }
+
     private function receivedByFields(): array
     {
         /** @var User $user */
@@ -425,6 +480,11 @@ class DocumentController extends Controller
 
         foreach ($files as $file) {
             $path = $file->store("documents/{$yearMonth}/{$document->id}", 'local');
+
+            if (! Storage::disk('local')->exists($path)) {
+                throw new \RuntimeException('Failed to save uploaded PDF to storage.');
+            }
+
             $attachment = $document->attachments()->create([
                 'uploaded_by' => Auth::id(),
                 'file_path' => $path,
@@ -437,5 +497,200 @@ class DocumentController extends Controller
         }
 
         return $attachments;
+    }
+
+    public function extendDueDate(Request $request, Document $document)
+    {
+        $validatedData = $request->validate([
+            'daysToAdd' => 'required|integer|min:1|max:365',
+            'reason' => 'required|string|max:500',
+        ]);
+
+        if (! $document->due_date) {
+            return response()->json(['message' => 'Document does not have a due date to extend.'], 400);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $previousDueDate = $document->due_date;
+            $newDueDate = Carbon::parse($previousDueDate)->addDays($validatedData['daysToAdd']);
+
+            // Update document due date
+            $document->update([
+                'due_date' => $newDueDate->format('Y-m-d'),
+            ]);
+
+            // Create audit trail record
+            $extension = DueDateExtension::create([
+                'document_id' => $document->id,
+                'extended_by' => Auth::id(),
+                'days_added' => $validatedData['daysToAdd'],
+                'previous_due_date' => $previousDueDate,
+                'new_due_date' => $newDueDate->format('Y-m-d'),
+                'reason' => $validatedData['reason'],
+            ]);
+
+            DB::commit();
+
+            ActivityLogger::log(
+                'update',
+                'documents',
+                $document->zoning_application_no,
+                "Extended due date for document: {$document->document_title} ({$document->zoning_application_no}) by {$validatedData['daysToAdd']} days. Reason: {$validatedData['reason']}"
+            );
+
+            return response()->json([
+                'message' => 'Due date extended successfully.',
+                'document' => $document->fresh()->load(['dueDateExtensions.extendedBy:id,first_name,last_name']),
+                'extension' => $extension->load('extendedBy:id,first_name,last_name'),
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'message' => 'Failed to extend due date.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function updateOic(Request $request, Document $document)
+    {
+        $validatedData = $request->validate([
+            'user_id' => 'required|exists:users,id',
+        ]);
+
+        try {
+            $user = User::findOrFail($validatedData['user_id']);
+            $oicName = $user->fullName();
+
+            $document->update([
+                'oic' => $oicName,
+            ]);
+
+            ActivityLogger::log(
+                'update',
+                'documents',
+                $document->zoning_application_no,
+                "Updated OIC for document: {$document->document_title} ({$document->zoning_application_no}) to {$oicName}"
+            );
+
+            return response()->json([
+                'message' => 'OIC updated successfully.',
+                'document' => $document->fresh(),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to update OIC.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function updateStatus(Request $request, Document $document)
+    {
+        $validatedData = $request->validate([
+            'status' => 'required|in:pending,processing,completed,finalized',
+        ]);
+
+        try {
+            $document->update([
+                'status' => $validatedData['status'],
+            ]);
+
+            ActivityLogger::log(
+                'update',
+                'documents',
+                $document->zoning_application_no,
+                "Updated document status for: {$document->document_title} ({$document->zoning_application_no}) to {$validatedData['status']}"
+            );
+
+            return response()->json([
+                'message' => 'Document status updated successfully.',
+                'document' => $document->fresh(),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to update document status.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function uploadOicAttachment(Request $request, Document $document)
+    {
+        $validatedData = $request->validate([
+            'file' => 'required|file|mimes:pdf|max:10240',
+        ]);
+
+        if (! in_array($document->status, ['completed', 'finalized'])) {
+            return response()->json([
+                'message' => 'OIC attachment can only be uploaded for completed or finalized documents.',
+            ], 403);
+        }
+
+        try {
+            $file = $validatedData['file'];
+            $fileName = time().'_OIC_'.$file->getClientOriginalName();
+            $filePath = $file->storeAs('documents/oic', $fileName, 'public');
+
+            $attachment = DocumentAttachment::create([
+                'document_id' => $document->id,
+                'file_path' => $filePath,
+                'file_name' => $fileName,
+                'file_type' => $file->getClientMimeType(),
+                'file_size' => $file->getSize(),
+                'attachment_type' => 'oic',
+            ]);
+
+            ActivityLogger::log(
+                'create',
+                'document_attachments',
+                $document->zoning_application_no,
+                "Uploaded OIC attachment for document: {$document->document_title} ({$document->zoning_application_no})"
+            );
+
+            return response()->json([
+                'message' => 'OIC attachment uploaded successfully.',
+                'attachment' => $attachment,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to upload OIC attachment.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    private function specificProjectTypeRule(Request $request): array
+    {
+        return [
+            'required',
+            'string',
+            function ($attribute, $value, $fail) use ($request) {
+                $projectTypeId = $request->input('typeOfProject');
+                if ($projectTypeId) {
+                    $hasSpecificTypes = \App\Models\SpecificProjectType::where('project_type_id', $projectTypeId)->exists();
+                    if ($hasSpecificTypes) {
+                        if ($value === 'N/A' || $value === '') {
+                            $fail('The Specific Project Type field is required.');
+                        } else {
+                            $exists = \App\Models\SpecificProjectType::where('id', $value)
+                                ->where('project_type_id', $projectTypeId)
+                                ->exists();
+                            if (! $exists) {
+                                $fail('The selected Specific Project Type is invalid.');
+                            }
+                        }
+                    } else {
+                        if ($value !== 'N/A') {
+                            $fail('The Specific Project Type must be N/A.');
+                        }
+                    }
+                }
+            },
+        ];
     }
 }

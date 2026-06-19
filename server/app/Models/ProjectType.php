@@ -17,4 +17,9 @@ class ProjectType extends Model
     {
         return $this->hasMany(Document::class);
     }
+
+    public function specificProjectTypes()
+    {
+        return $this->hasMany(SpecificProjectType::class);
+    }
 }

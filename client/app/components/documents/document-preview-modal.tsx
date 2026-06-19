@@ -45,6 +45,7 @@ export function DocumentPreviewModal({ document, open, onClose }: DocumentPrevie
                         <div className="grid grid-cols-2 gap-4">
                             <Field label="Zoning" value={document.zoning?.name} />
                             <Field label="Type of Project" value={document.project_type?.name} />
+                            <Field label="Specific Project Type" value={document.specific_project_type?.name} />
                             <Field label="Date of Application" value={document.date_of_application ? format(new Date(document.date_of_application), "MMMM d, yyyy") : null} />
                             <Field label="Due Date" value={document.due_date ? format(new Date(document.due_date), "MMMM d, yyyy") : null} />
                         </div>
