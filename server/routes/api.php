@@ -36,6 +36,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('documents/{document}/oic-attachment', [\App\Http\Controllers\DocumentController::class, 'uploadOicAttachment'])->middleware('permission:files,update');
     Route::put('documents/{document}/oic', [\App\Http\Controllers\DocumentController::class, 'updateOic'])->middleware('permission:files,update');
 
+    // Inspection Reports
+    Route::get('documents/{document}/inspection-report', [\App\Http\Controllers\InspectionReportController::class, 'show'])->middleware('permission:files,inspection_report');
+    Route::post('documents/{document}/inspection-report', [\App\Http\Controllers\InspectionReportController::class, 'store'])->middleware('permission:files,inspection_report');
+    Route::put('documents/{document}/inspection-report/{inspectionReport}', [\App\Http\Controllers\InspectionReportController::class, 'update'])->middleware('permission:files,inspection_report');
+
+    // Locational Clearance
+    Route::get('documents/{document}/locational-clearance', [\App\Http\Controllers\LocationalClearanceController::class, 'show'])->middleware('permission:files,generate_locational_clearance');
+    Route::post('documents/{document}/locational-clearance/generate', [\App\Http\Controllers\LocationalClearanceController::class, 'generate'])->middleware('permission:files,generate_locational_clearance');
+
     // File Attachments
     Route::get('attachments', [DocumentAttachmentController::class, 'index']);
     Route::get('attachments/{attachment}/preview', [DocumentAttachmentController::class, 'preview']);

@@ -1,7 +1,7 @@
 import * as React from "react"
 import { format } from "date-fns"
 import { useQuery } from "@tanstack/react-query"
-import { FileText, X, ChevronLeft, ChevronRight, Loader2, Download, Eye, Pencil, FolderOpen, Trash2, Search, AlertTriangle } from "lucide-react"
+import { FileText, X, ChevronLeft, ChevronRight, Loader2, Download, Eye, Pencil, FolderOpen, Trash2, Search, AlertTriangle, ClipboardCheck } from "lucide-react"
 import { Input } from "~/components/ui/input"
 import { DocumentService } from "~/api/DocumentService"
 import type { DashboardMonthCount } from "~/api/DocumentService"
@@ -20,7 +20,10 @@ import { PdfPreviewModal } from "~/components/files/pdf-preview-modal"
 import { EditDocumentModal } from "~/components/documents/edit-document-modal"
 import { ManageAttachmentsModal } from "~/components/documents/manage-attachments-modal"
 import { DeleteDocumentConfirm } from "~/components/documents/delete-document-confirm"
+import { InspectionReportModal } from "~/components/documents/inspection-report-modal"
 import { useAuthStore } from "~/store/auth"
+import { canManageInspectionReport, canGenerateLocationalClearance } from "~/lib/permissions"
+import { GenerateLocationalClearanceButton } from "~/components/documents/generate-locational-clearance-button"
 
 // ─── Year helpers ───────────────────────────────────────────────────────────
 const CURRENT_YEAR = new Date().getFullYear()
@@ -62,8 +65,11 @@ type DocumentsTableProps = {
     canViewFiles: boolean
     canEditDocument: boolean
     canDeleteDocument: boolean
+    canInspectionReport: boolean
+    canGenerateLc: boolean
     onEditDocument: (documentId: number) => void
     onManageAttachments: (documentId: number) => void
+    onInspectionReport: (documentId: number) => void
     onDeleteDocument: (documentId: number, documentTitle: string) => void
 }
 
@@ -79,8 +85,11 @@ function DocumentsTable({
     canViewFiles,
     canEditDocument,
     canDeleteDocument,
+    canInspectionReport,
+    canGenerateLc,
     onEditDocument,
     onManageAttachments,
+    onInspectionReport,
     onDeleteDocument,
 }: DocumentsTableProps) {
     const [page, setPage] = React.useState(1)
@@ -243,6 +252,26 @@ function DocumentsTable({
                                             <Download className="h-4 w-4" />
                                         </Button>
                                     )}
+                                    {canInspectionReport && (
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="h-7 w-7 p-0 text-teal-700 hover:bg-teal-50"
+                                            onClick={() => onInspectionReport(doc.id)}
+                                            title="Inspection Report"
+                                        >
+                                            <ClipboardCheck className="h-4 w-4" />
+                                        </Button>
+                                    )}
+                                    {canGenerateLc && doc.status === "completed" && (
+                                        <GenerateLocationalClearanceButton
+                                            document={doc}
+                                            iconOnly
+                                            showLabel={false}
+                                            variant="ghost"
+                                            className="h-7 w-7 p-0 text-indigo-700 hover:bg-indigo-50"
+                                        />
+                                    )}
                                     {canDeleteDocument && (
                                         <Button
                                             size="sm"
@@ -294,8 +323,10 @@ type OverdueApplicationsTableProps = {
     canViewFiles: boolean
     canEditDocument: boolean
     canDeleteDocument: boolean
+    canInspectionReport: boolean
     onEditDocument: (documentId: number) => void
     onManageAttachments: (documentId: number) => void
+    onInspectionReport: (documentId: number) => void
     onDeleteDocument: (documentId: number, documentTitle: string) => void
 }
 
@@ -303,8 +334,10 @@ function OverdueApplicationsTable({
     canViewFiles,
     canEditDocument,
     canDeleteDocument,
+    canInspectionReport,
     onEditDocument,
     onManageAttachments,
+    onInspectionReport,
     onDeleteDocument,
 }: OverdueApplicationsTableProps) {
     const [page, setPage] = React.useState(1)
@@ -439,7 +472,18 @@ function OverdueApplicationsTable({
                                                 <FolderOpen className="h-4 w-4" />
                                             </Button>
                                         )}
-                                        {canDeleteDocument && (
+                                        {canInspectionReport && (
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="h-7 w-7 p-0 text-teal-700 hover:bg-teal-50"
+                                            onClick={() => onInspectionReport(doc.id)}
+                                            title="Inspection Report"
+                                        >
+                                            <ClipboardCheck className="h-4 w-4" />
+                                        </Button>
+                                    )}
+                                    {canDeleteDocument && (
                                             <Button
                                                 size="sm"
                                                 variant="ghost"
@@ -504,6 +548,7 @@ export default function Dashboard() {
     const [manageDocumentId, setManageDocumentId] = React.useState<number | null>(null)
     const [deleteDocumentId, setDeleteDocumentId] = React.useState<number | null>(null)
     const [deleteDocumentTitle, setDeleteDocumentTitle] = React.useState<string>("")
+    const [inspectionReportDocumentId, setInspectionReportDocumentId] = React.useState<number | null>(null)
 
     const { data, isLoading } = useQuery({
         queryKey: ["dashboard", selectedYear],
@@ -523,6 +568,8 @@ export default function Dashboard() {
     const canDeleteDocument = user?.roles?.some((role) =>
         role.permissions?.some((p: any) => p.resource === "Files" && p.name === "delete")
     ) ?? false
+    const canInspectionReport = canManageInspectionReport(user)
+    const canGenerateLc = canGenerateLocationalClearance(user)
 
     // Pre-select current month once data loads
     React.useEffect(() => {
@@ -589,8 +636,10 @@ export default function Dashboard() {
                         canViewFiles={canViewFiles}
                         canEditDocument={canEditDocument}
                         canDeleteDocument={canDeleteDocument}
+                        canInspectionReport={canInspectionReport}
                         onEditDocument={(documentId) => setEditDocumentId(documentId)}
                         onManageAttachments={(documentId) => setManageDocumentId(documentId)}
+                        onInspectionReport={(documentId) => setInspectionReportDocumentId(documentId)}
                         onDeleteDocument={(documentId, documentTitle) => {
                             setDeleteDocumentId(documentId)
                             setDeleteDocumentTitle(documentTitle)
@@ -692,8 +741,11 @@ export default function Dashboard() {
                             canViewFiles={canViewFiles}
                             canEditDocument={canEditDocument}
                             canDeleteDocument={canDeleteDocument}
+                            canInspectionReport={canInspectionReport}
+                            canGenerateLc={canGenerateLc}
                             onEditDocument={(documentId) => setEditDocumentId(documentId)}
                             onManageAttachments={(documentId) => setManageDocumentId(documentId)}
+                            onInspectionReport={(documentId) => setInspectionReportDocumentId(documentId)}
                             onDeleteDocument={(documentId, documentTitle) => {
                                 setDeleteDocumentId(documentId)
                                 setDeleteDocumentTitle(documentTitle)
@@ -713,8 +765,11 @@ export default function Dashboard() {
                             canViewFiles={canViewFiles}
                             canEditDocument={canEditDocument}
                             canDeleteDocument={canDeleteDocument}
+                            canInspectionReport={canInspectionReport}
+                            canGenerateLc={canGenerateLc}
                             onEditDocument={(documentId) => setEditDocumentId(documentId)}
                             onManageAttachments={(documentId) => setManageDocumentId(documentId)}
+                            onInspectionReport={(documentId) => setInspectionReportDocumentId(documentId)}
                             onDeleteDocument={(documentId, documentTitle) => {
                                 setDeleteDocumentId(documentId)
                                 setDeleteDocumentTitle(documentTitle)
@@ -827,6 +882,13 @@ export default function Dashboard() {
                     setDeleteDocumentTitle("")
                 }}
             />
+
+            <InspectionReportModal
+                documentId={inspectionReportDocumentId}
+                open={inspectionReportDocumentId !== null}
+                onClose={() => setInspectionReportDocumentId(null)}
+            />
+
         </div>
     )
 }

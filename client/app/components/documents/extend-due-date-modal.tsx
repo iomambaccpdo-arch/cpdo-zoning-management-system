@@ -35,9 +35,10 @@ interface ExtendDueDateModalProps {
     currentDueDate: string | null
     open: boolean
     onClose: () => void
+    onSuccess?: () => void
 }
 
-export function ExtendDueDateModal({ documentId, documentTitle, currentDueDate, open, onClose }: ExtendDueDateModalProps) {
+export function ExtendDueDateModal({ documentId, documentTitle, currentDueDate, open, onClose, onSuccess }: ExtendDueDateModalProps) {
     const queryClient = useQueryClient()
 
     const form = useForm<z.infer<typeof formSchema>>({
@@ -48,6 +49,12 @@ export function ExtendDueDateModal({ documentId, documentTitle, currentDueDate, 
         },
     })
 
+    React.useEffect(() => {
+        if (open) {
+            form.reset({ daysToAdd: 0, reason: "" })
+        }
+    }, [open, form])
+
     const extendMutation = useMutation({
         mutationFn: async (values: z.infer<typeof formSchema>) => {
             return DocumentService.extendDueDate(documentId!, values.daysToAdd, values.reason)
@@ -57,6 +64,8 @@ export function ExtendDueDateModal({ documentId, documentTitle, currentDueDate, 
             queryClient.invalidateQueries({ queryKey: ["documents"] })
             queryClient.invalidateQueries({ queryKey: ["document", documentId] })
             queryClient.invalidateQueries({ queryKey: ["dashboard"] })
+            queryClient.invalidateQueries({ queryKey: ["attachments"] })
+            onSuccess?.()
             form.reset()
             onClose()
         },
@@ -81,9 +90,9 @@ export function ExtendDueDateModal({ documentId, documentTitle, currentDueDate, 
         <Dialog open={open} onOpenChange={onClose}>
             <DialogContent className="sm:max-w-[500px]">
                 <DialogHeader>
-                    <DialogTitle>Extend Due Date</DialogTitle>
+                    <DialogTitle>Add Number of Days</DialogTitle>
                     <DialogDescription>
-                        Add additional days to the due date for: <span className="font-semibold">{documentTitle}</span>
+                        Extend the due date for this document when unforeseen events occur (e.g., natural disasters, power outages). Only affects: <span className="font-semibold">{documentTitle}</span>
                     </DialogDescription>
                 </DialogHeader>
 
@@ -153,7 +162,7 @@ export function ExtendDueDateModal({ documentId, documentTitle, currentDueDate, 
                                 className="bg-blue-600 hover:bg-blue-700 text-white"
                                 disabled={extendMutation.isPending}
                             >
-                                {extendMutation.isPending ? "Extending..." : "Extend Due Date"}
+                                {extendMutation.isPending ? "Adding..." : "Add Number of Days"}
                             </Button>
                         </div>
                     </form>

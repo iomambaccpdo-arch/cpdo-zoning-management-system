@@ -255,6 +255,8 @@ class DocumentController extends Controller
                 'routedToUsers',
                 'receivedByUser',
                 'attachments.uploader:id,first_name,last_name',
+                'dueDateExtensions.extendedBy:id,first_name,last_name',
+                'inspectionReport.inspector:id,first_name,middle_name,last_name,designation',
             ])
         );
     }
@@ -312,7 +314,6 @@ class DocumentController extends Controller
             'zoningApplicationNo' => 'required|string',
             'typeOfProject' => 'required|exists:project_types,id',
             'specificProjectType' => $this->specificProjectTypeRule($request),
-            'dueDate' => 'nullable|string',
             'applicantName' => 'required|string',
             'assistedBy' => 'nullable|string',
             'oic' => 'required|string',
@@ -339,7 +340,6 @@ class DocumentController extends Controller
                 'project_type_id' => $validatedData['typeOfProject'],
                 'specific_project_type_id' => $validatedData['specificProjectType'] === 'N/A' ? null : (int) $validatedData['specificProjectType'],
                 'date_of_application' => Carbon::now()->format('Y-m-d'),
-                'due_date' => isset($validatedData['dueDate']) ? Carbon::parse($validatedData['dueDate'])->format('Y-m-d') : null,
                 'applicant_name' => $validatedData['applicantName'],
                 ...$this->receivedByFields(),
                 'assisted_by' => $validatedData['assistedBy'] ?? null,

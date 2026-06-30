@@ -2,12 +2,11 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Hash;
 
 class RolesAndPermissionsSeeder extends Seeder
 {
@@ -28,6 +27,7 @@ class RolesAndPermissionsSeeder extends Seeder
         // Create Roles
         $superAdminRole = Role::firstOrCreate(['code' => 900], ['name' => 'Super Admin']);
         $coordinatorRole = Role::firstOrCreate(['code' => 800], ['name' => 'Coordinator']);
+        $sectionHeadRole = Role::firstOrCreate(['code' => 750], ['name' => 'Section Head']);
         $zoningOfficerRole = Role::firstOrCreate(['code' => 700], ['name' => 'Zoning Officer']);
         $zoningInspectorRole = Role::firstOrCreate(['code' => 600], ['name' => 'Zoning Inspector']);
 
@@ -40,6 +40,7 @@ class RolesAndPermissionsSeeder extends Seeder
                     ->pluck('id')
                     ->toArray());
             }
+
             return $ids;
         };
 
@@ -48,49 +49,51 @@ class RolesAndPermissionsSeeder extends Seeder
 
         $coordinatorRole->permissions()->sync($getPermissionIds(config('permissions.roles.coordinator')));
 
+        $sectionHeadRole->permissions()->sync($getPermissionIds(config('permissions.roles.section_head')));
+
         $zoningOfficerRole->permissions()->sync($getPermissionIds(config('permissions.roles.zoning_officer')));
 
         $zoningInspectorRole->permissions()->sync($getPermissionIds(config('permissions.roles.zoning_inspector')));
 
         // Seed Users
         $superAdminUser = User::firstOrCreate([
-            'email' => 'superadmin@example.com'
+            'email' => 'superadmin@example.com',
         ], [
             'first_name' => 'Super',
             'last_name' => 'Admin',
             'designation' => 'System Administrator',
             'section' => 'IT Section',
-            'password' => Hash::make('123456789')
+            'password' => Hash::make('123456789'),
         ]);
 
         $coordinatorUser = User::firstOrCreate([
-            'email' => 'coordinator@example.com'
+            'email' => 'coordinator@example.com',
         ], [
             'first_name' => 'Joseph',
             'last_name' => 'Raymund',
             'designation' => 'CPDC',
             'section' => 'Plans',
-            'password' => Hash::make('123456789')
+            'password' => Hash::make('123456789'),
         ]);
 
         $officerUser = User::firstOrCreate([
-            'email' => 'officer@example.com'
+            'email' => 'officer@example.com',
         ], [
             'first_name' => 'Zoning',
             'last_name' => 'Officer',
             'designation' => 'Zoning Officer I',
             'section' => 'Zoning Section',
-            'password' => Hash::make('123456789')
+            'password' => Hash::make('123456789'),
         ]);
 
         $inspectorUser = User::firstOrCreate([
-            'email' => 'inspector@example.com'
+            'email' => 'inspector@example.com',
         ], [
             'first_name' => 'Zoning',
             'last_name' => 'Inspector',
             'designation' => 'Zoning Inspector',
             'section' => 'Enforcement Section',
-            'password' => Hash::make('123456789')
+            'password' => Hash::make('123456789'),
         ]);
 
         // Assign Roles to Users
@@ -101,7 +104,6 @@ class RolesAndPermissionsSeeder extends Seeder
         $officerUser->roles()->sync([$zoningOfficerRole->id]);
 
         $inspectorUser->roles()->sync([$zoningInspectorRole->id]);
-
 
     }
 }

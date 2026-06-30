@@ -1,6 +1,6 @@
 import * as React from "react"
 import { format } from "date-fns"
-import { Download, Eye, FileText, Trash2, CalendarPlus } from "lucide-react"
+import { Download, Eye, FileText, Trash2, CalendarPlus, ClipboardCheck } from "lucide-react"
 import { Button } from "~/components/ui/button"
 import { Skeleton } from "~/components/ui/skeleton"
 import {
@@ -19,7 +19,9 @@ import type { DocumentAttachment } from "~/api/DocumentService"
 import { ViewDocumentTable } from "~/components/files/view-document-table"
 import { PdfPreviewModal } from "~/components/files/pdf-preview-modal"
 import { ExtendDueDateModal } from "~/components/documents/extend-due-date-modal"
+import { InspectionReportModal } from "~/components/documents/inspection-report-modal"
 import { useAuthStore } from "~/store/auth"
+import { canExtendDueDate, canManageInspectionReport } from "~/lib/permissions"
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 export function getFileExtColor(fileName: string): string {
@@ -57,14 +59,14 @@ export function FileCard({ attachment, onDeleted }: FileCardProps) {
     const canDelete = user?.roles?.some((role) =>
         role.permissions?.some((p: any) => p.resource === "Files" && p.name === "delete")
     )
-    const canExtendDueDate = user?.roles?.some((role) =>
-        role.permissions?.some((p: any) => p.resource === "Files" && p.name === "extend_due_date")
-    )
+    const canExtend = canExtendDueDate(user)
+    const canInspectionReport = canManageInspectionReport(user)
 
     const [showDocument, setShowDocument] = React.useState(false)
     const [showPreview, setShowPreview] = React.useState(false)
     const [showDeleteAlert, setShowDeleteAlert] = React.useState(false)
     const [showExtendDueDate, setShowExtendDueDate] = React.useState(false)
+    const [showInspectionReport, setShowInspectionReport] = React.useState(false)
     const [isDownloading, setIsDownloading] = React.useState(false)
 
     const isPdf = attachment.file_name.toLowerCase().endsWith(".pdf")
@@ -142,14 +144,24 @@ export function FileCard({ attachment, onDeleted }: FileCardProps) {
                     <Download className="h-3 w-3" />
                     Download
                 </Button>
-                {canExtendDueDate && attachment.document?.due_date && (
+                {canExtend && attachment.document?.due_date && (
                     <Button
                         size="sm"
                         className="h-7 text-[12px] px-2.5 bg-blue-600 hover:bg-blue-700 text-white gap-1"
                         onClick={() => setShowExtendDueDate(true)}
                     >
                         <CalendarPlus className="h-3 w-3" />
-                        Extend Due Date
+                        Add Number of Days
+                    </Button>
+                )}
+                {canInspectionReport && attachment.document && (
+                    <Button
+                        size="sm"
+                        className="h-7 text-[12px] px-2.5 bg-teal-600 hover:bg-teal-700 text-white gap-1"
+                        onClick={() => setShowInspectionReport(true)}
+                    >
+                        <ClipboardCheck className="h-3 w-3" />
+                        Inspection Report
                     </Button>
                 )}
                 {canDelete && (
@@ -230,6 +242,14 @@ export function FileCard({ attachment, onDeleted }: FileCardProps) {
                     currentDueDate={attachment.document.due_date}
                     open={showExtendDueDate}
                     onClose={() => setShowExtendDueDate(false)}
+                />
+            )}
+
+            {attachment.document && (
+                <InspectionReportModal
+                    documentId={attachment.document.id}
+                    open={showInspectionReport}
+                    onClose={() => setShowInspectionReport(false)}
                 />
             )}
         </div>

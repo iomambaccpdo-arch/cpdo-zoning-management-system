@@ -88,4 +88,17 @@ class User extends Authenticatable
     {
         return in_array($permission, $this->permissions);
     }
+
+    public function hasResourcePermission(string $resource, string $action): bool
+    {
+        foreach ($this->roles as $role) {
+            foreach ($role->permissions as $permission) {
+                if (strcasecmp($permission->resource, $resource) === 0 && $permission->name === $action) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
 }

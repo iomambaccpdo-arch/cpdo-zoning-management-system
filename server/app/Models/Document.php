@@ -92,4 +92,9 @@ class Document extends Model
     {
         return $this->hasMany(DueDateExtension::class)->latest();
     }
+
+    public function inspectionReport()
+    {
+        return $this->hasOne(InspectionReport::class);
+    }
 }

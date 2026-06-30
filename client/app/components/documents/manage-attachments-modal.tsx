@@ -1,7 +1,7 @@
 import * as React from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { format } from "date-fns"
-import { Download, Eye, Plus, Trash2, Upload, UserCheck } from "lucide-react"
+import { Download, Eye, Plus, Trash2, Upload, UserCheck, CalendarPlus, ClipboardCheck } from "lucide-react"
 import { toast } from "sonner"
 import { AccountService } from "~/api/AccountService"
 import { DocumentService } from "~/api/DocumentService"
@@ -41,6 +41,11 @@ import {
     TableRow,
 } from "~/components/ui/table"
 import { useAuthStore } from "~/store/auth"
+import { canExtendDueDate, canManageInspectionReport } from "~/lib/permissions"
+import { ExtendDueDateModal } from "~/components/documents/extend-due-date-modal"
+import { DueDateExtensionHistory } from "~/components/documents/due-date-extension-history"
+import { InspectionReportModal } from "~/components/documents/inspection-report-modal"
+import { GenerateLocationalClearanceButton } from "~/components/documents/generate-locational-clearance-button"
 
 interface ManageAttachmentsModalProps {
     documentId: number | null
@@ -53,6 +58,8 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
     const canReplaceAttachments = user?.roles?.some(
         (role) => role.name === "Coordinator" || role.name === "Super Admin"
     ) ?? false
+    const canExtend = canExtendDueDate(user)
+    const canInspectionReport = canManageInspectionReport(user)
 
     const queryClient = useQueryClient()
     const fileInputRef = React.useRef<HTMLInputElement>(null)
@@ -61,6 +68,8 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
     const [selectedAttachmentIds, setSelectedAttachmentIds] = React.useState<number[]>([])
     const [pendingDeleteId, setPendingDeleteId] = React.useState<number | null>(null)
     const [selectedOicUserId, setSelectedOicUserId] = React.useState<string>("")
+    const [showExtendDueDate, setShowExtendDueDate] = React.useState(false)
+    const [showInspectionReport, setShowInspectionReport] = React.useState(false)
 
     const { data: document } = useQuery({
         queryKey: ["document", documentId],
@@ -185,6 +194,8 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
 
     const isMutating = uploadMutation.isPending || replaceMutation.isPending || deleteMutation.isPending || updateOicMutation.isPending || updateStatusMutation.isPending
 
+    const documentAttachments = attachments?.filter((a) => a.attachment_type !== "oic") ?? []
+
     return (
         <>
             <Dialog open={open} onOpenChange={onClose}>
@@ -233,7 +244,7 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
                             Upload Additional PDFs
                         </Button>
                         {document && (document.status === 'completed' || document.status === 'finalized') && (
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                                 <select
                                     className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                                     value={selectedOicUserId}
@@ -291,6 +302,70 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
                     </div>
 
                     <div className="flex items-center gap-2 flex-wrap py-2 border-t">
+                        <span className="text-sm font-medium">Due Date:</span>
+                        {document?.due_date ? (
+                            <span className="text-sm font-semibold text-zinc-800">
+                                {format(new Date(document.due_date), "MMMM d, yyyy")}
+                            </span>
+                        ) : (
+                            <span className="text-sm text-muted-foreground italic">Not set</span>
+                        )}
+                        {canExtend && document?.due_date && (
+                            <Button
+                                size="sm"
+                                className="bg-blue-600 hover:bg-blue-700 text-white"
+                                onClick={() => setShowExtendDueDate(true)}
+                                disabled={isMutating}
+                            >
+                                <CalendarPlus className="h-4 w-4 mr-1" />
+                                Add Number of Days
+                            </Button>
+                        )}
+                    </div>
+
+                    {document?.due_date_extensions && document.due_date_extensions.length > 0 && (
+                        <div className="py-2 border-t space-y-2">
+                            <p className="text-sm font-medium">Due Date Extension History</p>
+                            <DueDateExtensionHistory extensions={document.due_date_extensions} />
+                        </div>
+                    )}
+
+                    {canInspectionReport && (
+                        <div className="flex items-center gap-2 flex-wrap py-2 border-t">
+                            <span className="text-sm font-medium">Inspection Report:</span>
+                            {document?.inspection_report ? (
+                                <span
+                                    className={`text-xs font-semibold uppercase px-2 py-0.5 rounded border ${
+                                        document.inspection_report.status === "submitted"
+                                            ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                                            : "bg-amber-50 text-amber-800 border-amber-200"
+                                    }`}
+                                >
+                                    {document.inspection_report.status === "submitted" ? "Submitted" : "Draft"}
+                                </span>
+                            ) : (
+                                <span className="text-xs text-muted-foreground italic">Not yet created</span>
+                            )}
+                            <Button
+                                size="sm"
+                                className="bg-teal-600 hover:bg-teal-700 text-white"
+                                onClick={() => setShowInspectionReport(true)}
+                                disabled={isMutating}
+                            >
+                                <ClipboardCheck className="h-4 w-4 mr-1" />
+                                Inspection Report
+                            </Button>
+                        </div>
+                    )}
+
+                    {document && document.status === "completed" && (
+                        <div className="flex items-center gap-2 flex-wrap py-2 border-t">
+                            <span className="text-sm font-medium">Locational Clearance:</span>
+                            <GenerateLocationalClearanceButton document={document} />
+                        </div>
+                    )}
+
+                    <div className="flex items-center gap-2 flex-wrap py-2 border-t">
                         <span className="text-sm font-medium">Document Status:</span>
                         {document && (
                             <Select
@@ -332,14 +407,14 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
                                         </TableCell>
                                     </TableRow>
                                 )}
-                                {!isLoading && (!attachments || attachments.length === 0) && (
+                                {!isLoading && documentAttachments.length === 0 && (
                                     <TableRow>
                                         <TableCell colSpan={canReplaceAttachments ? 5 : 4} className="text-center py-8 text-muted-foreground">
                                             No attachments found for this document.
                                         </TableCell>
                                     </TableRow>
                                 )}
-                                {!isLoading && attachments?.map((attachment) => (
+                                {!isLoading && documentAttachments.map((attachment) => (
                                     <TableRow key={attachment.id}>
                                         {canReplaceAttachments && (
                                             <TableCell>
@@ -433,6 +508,31 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
+
+            {document && (
+                <ExtendDueDateModal
+                    documentId={document.id}
+                    documentTitle={document.document_title}
+                    currentDueDate={document.due_date}
+                    open={showExtendDueDate}
+                    onClose={() => setShowExtendDueDate(false)}
+                    onSuccess={() => {
+                        queryClient.invalidateQueries({ queryKey: ["document", documentId] })
+                    }}
+                />
+            )}
+
+            {document && (
+                <InspectionReportModal
+                    documentId={document.id}
+                    open={showInspectionReport}
+                    onClose={() => {
+                        setShowInspectionReport(false)
+                        queryClient.invalidateQueries({ queryKey: ["document", documentId] })
+                        queryClient.invalidateQueries({ queryKey: ["inspection-report", documentId] })
+                    }}
+                />
+            )}
         </>
     )
 }

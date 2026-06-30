@@ -1,4 +1,9 @@
+import * as React from "react"
 import { format } from "date-fns"
+import { useQuery } from "@tanstack/react-query"
+import { ClipboardCheck } from "lucide-react"
+import { Button } from "~/components/ui/button"
+import { GenerateLocationalClearanceButton } from "~/components/documents/generate-locational-clearance-button"
 import {
     Dialog,
     DialogContent,
@@ -13,7 +18,10 @@ import {
     TableHeader,
     TableRow,
 } from "~/components/ui/table"
-import type { DocumentAttachment } from "~/api/DocumentService"
+import { DocumentService, type DocumentAttachment } from "~/api/DocumentService"
+import { InspectionReportModal } from "~/components/documents/inspection-report-modal"
+import { useAuthStore } from "~/store/auth"
+import { canManageInspectionReport } from "~/lib/permissions"
 
 interface ViewDocumentTableProps {
     attachment: DocumentAttachment
@@ -22,7 +30,16 @@ interface ViewDocumentTableProps {
 }
 
 export function ViewDocumentTable({ attachment, open, onClose }: ViewDocumentTableProps) {
+    const { user } = useAuthStore()
+    const canInspectionReport = canManageInspectionReport(user)
+    const [showInspectionReport, setShowInspectionReport] = React.useState(false)
     const doc = attachment.document
+
+    const { data: fullDocument } = useQuery({
+        queryKey: ["document", doc?.id],
+        queryFn: () => DocumentService.getDocument(doc!.id),
+        enabled: open && !!doc?.id,
+    })
 
     if (!doc) {
         return (
@@ -58,6 +75,7 @@ export function ViewDocumentTable({ attachment, open, onClose }: ViewDocumentTab
     ]
 
     return (
+        <>
         <Dialog open={open} onOpenChange={onClose}>
             <DialogContent className="sm:max-w-[600px] w-[95vw] max-h-[90dvh] flex flex-col p-0 gap-0">
                 <div className="p-6 pb-4 border-b">
@@ -65,6 +83,21 @@ export function ViewDocumentTable({ attachment, open, onClose }: ViewDocumentTab
                         <DialogTitle className="text-base text-zinc-800">Parent Document</DialogTitle>
                         <p className="text-sm font-medium text-zinc-600">{doc.document_title}</p>
                     </DialogHeader>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                        {canInspectionReport && (
+                            <Button
+                                size="sm"
+                                className="bg-teal-600 hover:bg-teal-700 text-white"
+                                onClick={() => setShowInspectionReport(true)}
+                            >
+                                <ClipboardCheck className="h-4 w-4 mr-1" />
+                                Inspection Report
+                            </Button>
+                        )}
+                        {fullDocument && (
+                            <GenerateLocationalClearanceButton document={fullDocument} />
+                        )}
+                    </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-6">
@@ -116,5 +149,14 @@ export function ViewDocumentTable({ attachment, open, onClose }: ViewDocumentTab
                 </div>
             </DialogContent>
         </Dialog>
+
+        {canInspectionReport && (
+            <InspectionReportModal
+                documentId={doc.id}
+                open={showInspectionReport}
+                onClose={() => setShowInspectionReport(false)}
+            />
+        )}
+    </>
     )
 }

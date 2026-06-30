@@ -8,6 +8,7 @@ export interface DocumentAttachment {
   file_name: string;
   file_type: string | null;
   file_size: number | null;
+  attachment_type?: 'document' | 'oic';
   created_at: string;
   uploader?: {
     id: number;
@@ -28,6 +29,157 @@ export interface DocumentAttachment {
     landmark: string;
     routed_to_users?: { id: number; first_name: string; last_name: string }[];
   };
+}
+
+export interface DueDateExtension {
+  id: number;
+  document_id: number;
+  days_added: number;
+  previous_due_date: string;
+  new_due_date: string;
+  reason: string | null;
+  created_at: string;
+  extended_by?:
+    | number
+    | {
+        id: number;
+        first_name: string;
+        last_name: string;
+      };
+}
+
+export interface InspectionReport {
+  id: number;
+  document_id: number;
+  inspector_id: number;
+  status: 'draft' | 'submitted';
+  date_of_report: string | null;
+  project_life_span: string | null;
+  project_significance: string | null;
+  right_over_land: string | null;
+  area_details: string | null;
+  location_details: string | null;
+  inspection_date: string | null;
+  project_status_as_of_inspection: string | null;
+  gps_coordinates: string | null;
+  information_provided_in_order: string | null;
+  information_provided_findings: string | null;
+  abutting_north: string | null;
+  abutting_south: string | null;
+  abutting_east: string | null;
+  abutting_west: string | null;
+  legal_bases: string | null;
+  findings_evaluation: string | null;
+  road_category: string | null;
+  road_standard_rrow: string | null;
+  road_actual_rrow: string | null;
+  road_min_setback: string | null;
+  road_as_per_plan: string | null;
+  road_remarks: string | null;
+  parking_building_code: string | null;
+  parking_space_requirement: string | null;
+  parking_remarks: string | null;
+  type_of_lot: string | null;
+  front_setback: string | null;
+  distance_center_line_to_building: string | null;
+  decision_recommended: string | null;
+  inspector_signature: string | null;
+  inspector_designation: string | null;
+  noted_by_signature: string | null;
+  noted_by_designation: string | null;
+  submitted_at: string | null;
+  created_at: string;
+  updated_at: string;
+  inspector?: {
+    id: number;
+    first_name: string;
+    middle_name?: string | null;
+    last_name: string;
+    designation?: string | null;
+  };
+}
+
+export interface InspectionReportPayload {
+  dateOfReport?: string;
+  projectLifeSpan?: string;
+  projectSignificance?: string;
+  rightOverLand?: string;
+  areaDetails?: string;
+  locationDetails?: string;
+  inspectionDate?: string;
+  projectStatusAsOfInspection?: string;
+  gpsCoordinates?: string;
+  informationProvidedInOrder?: string;
+  informationProvidedFindings?: string;
+  abuttingNorth?: string;
+  abuttingSouth?: string;
+  abuttingEast?: string;
+  abuttingWest?: string;
+  legalBases?: string;
+  findingsEvaluation?: string;
+  roadCategory?: string;
+  roadStandardRrow?: string;
+  roadActualRrow?: string;
+  roadMinSetback?: string;
+  roadAsPerPlan?: string;
+  roadRemarks?: string;
+  parkingBuildingCode?: string;
+  parkingSpaceRequirement?: string;
+  parkingRemarks?: string;
+  typeOfLot?: string;
+  frontSetback?: string;
+  distanceCenterLineToBuilding?: string;
+  decisionRecommended?: string;
+  inspectorSignature?: string;
+  inspectorDesignation?: string;
+  notedBySignature?: string;
+  notedByDesignation?: string;
+  submit?: boolean;
+}
+
+export interface InspectionReportResponse {
+  report: InspectionReport | null;
+  document?: Document;
+  message?: string;
+}
+
+export interface LocationalClearanceData {
+  applicationNumber: string;
+  decisionNumber: string;
+  dateReceived: string;
+  dateApproved: string;
+  dateRequirementsComplied: string;
+  applicantName: string;
+  corporationName: string;
+  applicantAddress: string;
+  corporationAddress: string;
+  projectType: string;
+  location: string;
+  floorArea: string;
+  lotArea: string;
+  frontageAtMainRoad: string;
+  typeOfLot: string;
+  standardRoadRightOfWay: string;
+  distanceCenterLineToBuilding: string;
+  rightOverLand: string;
+  decision: string;
+  conditions: string;
+  additionalConditions: string;
+  recommendingApprovalOfficer: string;
+  approvingOfficer: string;
+  orNumber: string;
+  amountPaid: string;
+  datePaid: string;
+  dateOfInspection: string;
+  dateOfLcPrepared: string;
+  documentTitle: string;
+}
+
+export interface LocationalClearanceResponse {
+  eligible: boolean;
+  reasons: string[];
+  data: LocationalClearanceData;
+  message?: string;
 }
 
 export interface Document {
@@ -65,6 +217,8 @@ export interface Document {
     last_name: string;
   }[];
   attachments?: DocumentAttachment[];
+  due_date_extensions?: DueDateExtension[];
+  inspection_report?: InspectionReport | null;
 }
 
 export interface DashboardMonthCount {
@@ -275,6 +429,47 @@ export class DocumentService {
         'Content-Type': 'multipart/form-data',
       },
     });
+    return response.data;
+  }
+
+  static async getInspectionReport(documentId: number) {
+    const response = await axiosInstance.get<InspectionReportResponse>(
+      `/api/documents/${documentId}/inspection-report`,
+    );
+    return response.data;
+  }
+
+  static async createInspectionReport(documentId: number, payload: InspectionReportPayload) {
+    const response = await axiosInstance.post<InspectionReportResponse>(
+      `/api/documents/${documentId}/inspection-report`,
+      payload,
+    );
+    return response.data;
+  }
+
+  static async updateInspectionReport(
+    documentId: number,
+    reportId: number,
+    payload: InspectionReportPayload,
+  ) {
+    const response = await axiosInstance.put<InspectionReportResponse>(
+      `/api/documents/${documentId}/inspection-report/${reportId}`,
+      payload,
+    );
+    return response.data;
+  }
+
+  static async getLocationalClearance(documentId: number) {
+    const response = await axiosInstance.get<LocationalClearanceResponse>(
+      `/api/documents/${documentId}/locational-clearance`,
+    );
+    return response.data;
+  }
+
+  static async generateLocationalClearance(documentId: number) {
+    const response = await axiosInstance.post<LocationalClearanceResponse>(
+      `/api/documents/${documentId}/locational-clearance/generate`,
+    );
     return response.data;
   }
 }

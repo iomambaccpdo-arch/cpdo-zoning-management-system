@@ -17,13 +17,21 @@ class CheckPermission
     {
         $user = $request->user();
 
-        if (!$user) {
+        if (! $user) {
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
-        foreach ($permissions as $permission) {
-            if ($user->hasPermission($permission)) {
+        $user->loadMissing('roles.permissions');
+
+        if (count($permissions) === 2) {
+            if ($user->hasResourcePermission($permissions[0], $permissions[1])) {
                 return $next($request);
+            }
+        } else {
+            foreach ($permissions as $permission) {
+                if ($user->hasPermission($permission)) {
+                    return $next($request);
+                }
             }
         }
 

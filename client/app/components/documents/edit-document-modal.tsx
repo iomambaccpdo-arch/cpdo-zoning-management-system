@@ -1,4 +1,5 @@
 import * as React from "react"
+import { format } from "date-fns"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useForm } from "react-hook-form"
@@ -40,7 +41,6 @@ const formSchema = z.object({
     zoningApplicationNo: z.string().min(1),
     typeOfProject: z.string().min(1),
     specificProjectType: z.string().min(1),
-    dueDate: z.string().optional(),
     applicantName: z.string().min(1),
     assistedBy: z.string().optional(),
     oic: z.string().optional(),
@@ -74,7 +74,6 @@ export function EditDocumentModal({ documentId, open, onClose }: EditDocumentMod
             zoningApplicationNo: "",
             typeOfProject: "",
             specificProjectType: "",
-            dueDate: "",
             applicantName: "",
             assistedBy: "",
             oic: "",
@@ -127,7 +126,6 @@ export function EditDocumentModal({ documentId, open, onClose }: EditDocumentMod
             zoningApplicationNo: document.zoning_application_no,
             typeOfProject: document.project_type_id.toString(),
             specificProjectType: document.specific_project_type_id ? document.specific_project_type_id.toString() : "N/A",
-            dueDate: document.due_date ?? "",
             applicantName: document.applicant_name,
             assistedBy: document.assisted_by ?? "",
             oic: document.oic,
@@ -155,9 +153,6 @@ export function EditDocumentModal({ documentId, open, onClose }: EditDocumentMod
             formData.append("zoningApplicationNo", values.zoningApplicationNo)
             formData.append("typeOfProject", values.typeOfProject)
             formData.append("specificProjectType", values.specificProjectType)
-            if (values.dueDate) {
-                formData.append("dueDate", values.dueDate)
-            }
             formData.append("applicantName", values.applicantName)
             if (values.assistedBy) {
                 formData.append("assistedBy", values.assistedBy)
@@ -390,17 +385,24 @@ export function EditDocumentModal({ documentId, open, onClose }: EditDocumentMod
                                         )
                                     }}
                                 />
-                                <FormField
-                                    control={form.control}
-                                    name="dueDate"
-                                    render={({ field }) => (
-                                        <FormItem>
-                                            <FormLabel>Due Date</FormLabel>
-                                            <FormControl><Input {...field} value={field.value ?? ""} /></FormControl>
-                                            <FormMessage />
-                                        </FormItem>
-                                    )}
-                                />
+                                <FormItem>
+                                    <FormLabel>Due Date</FormLabel>
+                                    <FormControl>
+                                        <Input
+                                            readOnly
+                                            disabled
+                                            value={
+                                                document?.due_date
+                                                    ? format(new Date(document.due_date), "MMMM d, yyyy")
+                                                    : "Not set"
+                                            }
+                                            className="bg-zinc-50 text-zinc-600"
+                                        />
+                                    </FormControl>
+                                    <p className="text-[11px] text-muted-foreground">
+                                        Due dates can only be extended via the &quot;Add Number of Days&quot; exception process.
+                                    </p>
+                                </FormItem>
                                 <FormField
                                     control={form.control}
                                     name="barangay"
