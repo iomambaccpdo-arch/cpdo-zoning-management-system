@@ -2,12 +2,20 @@
 
 import * as React from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useForm } from "react-hook-form"
+import { useFieldArray, useForm } from "react-hook-form"
 import * as z from "zod"
 import { format } from "date-fns"
 import { CalendarIcon, UploadCloud, MapPin, CheckCircle2 } from "lucide-react"
 
 import { useAuthStore } from "~/store/auth"
+import { isEncoderClerk } from "~/lib/permissions"
+import { BuildingsLotsFields } from "~/components/documents/buildings-lots-fields"
+import {
+    appendBuildingsAndLotsToFormData,
+    emptyBuildingEntry,
+    emptyLotEntry,
+} from "~/lib/document-property-utils"
+import { displayZoningClassificationName } from "~/lib/zoning-utils"
 import { Button } from "~/components/ui/button"
 import {
     Dialog,
@@ -74,6 +82,8 @@ const formSchema = z.object({
 
     // Step 2
     applicantName: z.string().min(1, { message: "Applicant Name is required" }),
+    corporationName: z.string().optional(),
+    corporationAddress: z.string().optional(),
     receivedBy: z.string().min(1, { message: "Received By is required" }),
     assistedBy: z.string().optional(),
     routedTo: z.array(z.string()).min(1, { message: "Routed to is required" }),
@@ -85,8 +95,22 @@ const formSchema = z.object({
     coordinates: z.string().min(1, { message: "Coordinates are required" }),
 
     // Step 4
-    floorArea: z.string().min(1, { message: "Floor Area is required" }),
-    lotArea: z.string().min(1, { message: "Lot Area is required" }),
+    buildings: z
+        .array(
+            z.object({
+                name: z.string().min(1, { message: "Building name is required" }),
+                area: z.string().min(1, { message: "Building area is required" }),
+            }),
+        )
+        .min(1, { message: "At least one building is required" }),
+    lots: z
+        .array(
+            z.object({
+                landTitle: z.string().min(1, { message: "Land title / TCT number is required" }),
+                area: z.string().min(1, { message: "Lot area is required" }),
+            }),
+        )
+        .min(1, { message: "At least one lot is required" }),
     storey: z.string().min(1, { message: "Storey is required" }),
     mezanine: z.string().optional(),
 
@@ -115,6 +139,7 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
     const [uploadProgress, setUploadProgress] = React.useState(0)
     const queryClient = useQueryClient()
     const authUser = useAuthStore((state) => state.user)
+    const isEncoder = isEncoderClerk(authUser)
     const receivedByLabel = authUser ? formatUserFullName(authUser) : "Your account"
 
     const { data: zonings } = useQuery({
@@ -149,6 +174,8 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
             specificProjectType: "",
             dateOfApplication: new Date(),
             applicantName: "",
+            corporationName: "",
+            corporationAddress: "",
             receivedBy: "Auto-assigned by System",
             assistedBy: "",
             routedTo: [],
@@ -156,13 +183,31 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
             purok: "",
             landmark: "",
             coordinates: "",
-            floorArea: "",
-            lotArea: "",
+            buildings: [emptyBuildingEntry()],
+            lots: [emptyLotEntry()],
             storey: "",
             mezanine: "",
             dueDate: "", // Auto-calculated
             files: [],
         },
+    })
+
+    const {
+        fields: buildingFields,
+        append: appendBuilding,
+        remove: removeBuilding,
+    } = useFieldArray({
+        control: form.control,
+        name: "buildings",
+    })
+
+    const {
+        fields: lotFields,
+        append: appendLot,
+        remove: removeLot,
+    } = useFieldArray({
+        control: form.control,
+        name: "lots",
     })
 
     // Calculate due date automatically from configured working days
@@ -202,7 +247,7 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
         } else if (activeStep === 2) {
             fieldsToValidate = ['barangay', 'purok', 'landmark', 'coordinates']
         } else if (activeStep === 3) {
-            fieldsToValidate = ['floorArea', 'lotArea', 'storey']
+            fieldsToValidate = ['buildings', 'lots', 'storey']
         } else if (activeStep === 4) {
             fieldsToValidate = ['files']
         }
@@ -218,10 +263,15 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
     }
 
     const { mutate: createDocument, isPending } = useMutation({
-        mutationFn: async (values: z.infer<typeof formSchema>) => {
+        mutationFn: async ({
+            values,
+            mode,
+        }: {
+            values: z.infer<typeof formSchema>
+            mode: "draft" | "submit" | "create"
+        }) => {
             const formData = new FormData()
 
-            // Append standard text/date fields
             formData.append('documentTitle', values.documentTitle)
             formData.append('zoning', values.zoning)
             formData.append('zoningApplicationNo', values.zoningApplicationNo)
@@ -231,6 +281,8 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
             if (values.dueDate) formData.append('dueDate', values.dueDate)
 
             formData.append('applicantName', values.applicantName)
+            if (values.corporationName) formData.append('corporationName', values.corporationName)
+            if (values.corporationAddress) formData.append('corporationAddress', values.corporationAddress)
             formData.append('receivedBy', values.receivedBy)
             if (values.assistedBy) formData.append('assistedBy', values.assistedBy)
 
@@ -239,21 +291,24 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
             formData.append('landmark', values.landmark)
             if (values.coordinates) formData.append('coordinates', values.coordinates)
 
-            formData.append('floorArea', values.floorArea)
-            formData.append('lotArea', values.lotArea)
+            appendBuildingsAndLotsToFormData(formData, values.buildings, values.lots)
             formData.append('storey', values.storey)
             if (values.mezanine) formData.append('mezanine', values.mezanine)
 
-            // Append arrays
             values.routedTo.forEach((userId) => {
                 formData.append('routedTo[]', userId)
             })
 
-            // Append files
             if (values.files && values.files.length > 0) {
                 values.files.forEach((file: File) => {
                     formData.append('files[]', file)
                 })
+            }
+
+            if (mode === "draft") {
+                formData.append('saveAsDraft', '1')
+            } else if (mode === "submit") {
+                formData.append('submitForProcessing', '1')
             }
 
             return await DocumentService.createDocument(formData, (progressEvent) => {
@@ -263,7 +318,7 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
                 }
             })
         },
-        onSuccess: () => {
+        onSuccess: (_data, variables) => {
             setOpen(false)
             setUploadProgress(0)
             form.reset()
@@ -271,7 +326,13 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
             queryClient.invalidateQueries({ queryKey: ['documents'] })
             queryClient.invalidateQueries({ queryKey: ['attachments'] })
             queryClient.invalidateQueries({ queryKey: ['dashboard'] })
-            toast.success("Document created successfully")
+            toast.success(
+                variables.mode === "draft"
+                    ? "Application draft saved successfully"
+                    : variables.mode === "submit"
+                      ? "Application submitted successfully"
+                      : "Document created successfully"
+            )
         },
         onError: (error: any) => {
             console.error("Failed to submit document:", error)
@@ -279,8 +340,31 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
         }
     })
 
+    async function handleSaveDraft() {
+        const isValid = await form.trigger([
+            "documentTitle",
+            "zoning",
+            "zoningApplicationNo",
+            "typeOfProject",
+            "specificProjectType",
+            "applicantName",
+            "barangay",
+            "purok",
+            "landmark",
+        ])
+
+        if (!isValid) {
+            return
+        }
+
+        createDocument({ values: form.getValues(), mode: "draft" })
+    }
+
     function onSubmit(values: z.infer<typeof formSchema>) {
-        createDocument(values)
+        createDocument({
+            values,
+            mode: isEncoder ? "submit" : "create",
+        })
     }
 
     return (
@@ -358,7 +442,7 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
                                                 <SelectContent>
                                                     {zonings?.map((zoning) => (
                                                         <SelectItem key={zoning.id} value={zoning.id.toString()}>
-                                                            {zoning.name}
+                                                            {displayZoningClassificationName(zoning.name, zoning.name)}
                                                         </SelectItem>
                                                     ))}
                                                 </SelectContent>
@@ -505,6 +589,32 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
                                             <FormLabel>Name of Applicant *</FormLabel>
                                             <FormControl>
                                                 <Input placeholder="Enter applicant name" className="bg-green-50/50" {...field} />
+                                            </FormControl>
+                                            <FormMessage />
+                                        </FormItem>
+                                    )}
+                                />
+                                <FormField
+                                    control={form.control}
+                                    name="corporationName"
+                                    render={({ field }) => (
+                                        <FormItem>
+                                            <FormLabel>Name of Corporation</FormLabel>
+                                            <FormControl>
+                                                <Input placeholder="Enter corporation name" className="bg-green-50/50" {...field} />
+                                            </FormControl>
+                                            <FormMessage />
+                                        </FormItem>
+                                    )}
+                                />
+                                <FormField
+                                    control={form.control}
+                                    name="corporationAddress"
+                                    render={({ field }) => (
+                                        <FormItem>
+                                            <FormLabel>Address of Corporation</FormLabel>
+                                            <FormControl>
+                                                <Input placeholder="Enter corporation address" className="bg-green-50/50" {...field} />
                                             </FormControl>
                                             <FormMessage />
                                         </FormItem>
@@ -668,31 +778,14 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
 
                             {/* STEP 4: Property Details */}
                             <div className={cn("flex flex-col gap-6", activeStep === 3 ? "flex" : "hidden")}>
-                                <FormField
+                                <BuildingsLotsFields
                                     control={form.control}
-                                    name="floorArea"
-                                    render={({ field }) => (
-                                        <FormItem>
-                                            <FormLabel>Floor Area (square meter) *</FormLabel>
-                                            <FormControl>
-                                                <Input type="number" placeholder="0" className="bg-green-50/50" {...field} />
-                                            </FormControl>
-                                            <FormMessage />
-                                        </FormItem>
-                                    )}
-                                />
-                                <FormField
-                                    control={form.control}
-                                    name="lotArea"
-                                    render={({ field }) => (
-                                        <FormItem>
-                                            <FormLabel>Lot Area (square meter) *</FormLabel>
-                                            <FormControl>
-                                                <Input type="number" placeholder="0" className="bg-green-50/50" {...field} />
-                                            </FormControl>
-                                            <FormMessage />
-                                        </FormItem>
-                                    )}
+                                    buildingFields={buildingFields}
+                                    appendBuilding={appendBuilding}
+                                    removeBuilding={removeBuilding}
+                                    lotFields={lotFields}
+                                    appendLot={appendLot}
+                                    removeLot={removeLot}
                                 />
                                 <FormField
                                     control={form.control}
@@ -810,6 +903,24 @@ export function NewDocumentModal({ children }: NewDocumentModalProps) {
                         <Button type="button" onClick={nextStep} className="bg-green-600 hover:bg-green-700 text-white">
                             Next Step
                         </Button>
+                    ) : isEncoder ? (
+                        <div className="flex gap-2">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={handleSaveDraft}
+                                disabled={isPending}
+                            >
+                                {isPending ? "Saving..." : "Save Draft"}
+                            </Button>
+                            <Button
+                                onClick={form.handleSubmit(onSubmit)}
+                                disabled={isPending}
+                                className="bg-green-600 hover:bg-green-700 text-white md:min-w-[180px]"
+                            >
+                                {isPending ? (uploadProgress > 0 && uploadProgress < 100 ? `Uploading... ${uploadProgress}%` : "Submitting...") : "Submit for Processing"}
+                            </Button>
+                        </div>
                     ) : (
                         <Button
                             onClick={form.handleSubmit(onSubmit)}

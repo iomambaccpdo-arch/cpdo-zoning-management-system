@@ -1,8 +1,19 @@
 import * as React from "react"
 import { format } from "date-fns"
 import type { Document, InspectionReport } from "~/api/DocumentService"
-import { buildInspectionReportPrefill } from "~/lib/inspection-report-utils"
-import { getPanaboLogoUrl, PANABO_LOGO_PATH } from "~/lib/public-assets"
+import {
+    buildInspectionReportPrefill,
+    formatParkingSpaceRequirement,
+    normalizeFrontages,
+    PROJECT_STATUS_OPTIONS,
+    resolvedVerifiedValue,
+} from "~/lib/inspection-report-utils"
+import {
+    CPDO_LOGO_PATH,
+    getCpdoLogoUrl,
+    getPanaboLogoUrl,
+    PANABO_LOGO_PATH,
+} from "~/lib/public-assets"
 
 interface InspectionReportPrintProps {
     document: Document
@@ -30,25 +41,81 @@ function checkbox(label: string, selected: boolean): string {
     return `${selected ? "(X)" : "( )"} ${label}`
 }
 
-function buildEvaluationReportHtml(document: Document, report: InspectionReport, logoUrl: string): string {
+function verifiedValueCell(
+    report: InspectionReport,
+    key: string,
+    encodedValue: string,
+    colspan = 3,
+): string {
+    const value = resolvedVerifiedValue(
+        encodedValue,
+        report.field_verifications ?? undefined,
+        key,
+    )
+    return `<td class="value" colspan="${colspan}">${escapeHtml(display(value))}</td>`
+}
+
+function buildEvaluationReportHtml(
+    document: Document,
+    report: InspectionReport,
+    panaboLogoUrl: string,
+    cpdoLogoUrl: string,
+): string {
     const prefill = buildInspectionReportPrefill(document)
-    const lifeSpan = report.project_life_span ?? ""
     const significance = report.project_significance ?? ""
     const status = report.project_status_as_of_inspection ?? ""
-    const infoOrder = report.information_provided_in_order ?? ""
+    const hasBuildingsOrLots = prefill.buildings.length > 0 || prefill.lots.length > 0
+
+    const areaRows = hasBuildingsOrLots
+        ? [
+            ...prefill.lots.flatMap((lot, index) => [
+                `<tr>
+                    <td class="label">Lot ${index + 1} Land Title / TCT</td>
+                    ${verifiedValueCell(report, `lot_${index}_land_title`, lot.land_title)}
+                </tr>`,
+                `<tr>
+                    <td class="label">Lot ${index + 1} Area</td>
+                    ${verifiedValueCell(report, `lot_${index}_area`, lot.area ? `${lot.area} sq.m.` : "")}
+                </tr>`,
+            ]),
+            ...prefill.buildings.flatMap((building, index) => [
+                `<tr>
+                    <td class="label">Building ${index + 1} Name</td>
+                    ${verifiedValueCell(report, `building_${index}_name`, building.name)}
+                </tr>`,
+                `<tr>
+                    <td class="label">Building ${index + 1} Area</td>
+                    ${verifiedValueCell(report, `building_${index}_area`, building.area ? `${building.area} sq.m.` : "")}
+                </tr>`,
+            ]),
+        ].join("")
+        : `<tr>
+            <td class="label">Project Area</td>
+            ${verifiedValueCell(report, "area_details", prefill.areaDetails || report.area_details || "")}
+        </tr>`
+
+    const frontages = normalizeFrontages(report.frontages, {
+        road_category: report.road_category,
+        road_standard_rrow: report.road_standard_rrow,
+        road_actual_rrow: report.road_actual_rrow,
+        road_min_setback: report.road_min_setback,
+        road_as_per_plan: report.road_as_per_plan,
+        front_setback: report.front_setback,
+    })
 
     return `
         <div class="page">
             <div class="header-band">
                 <div class="header-row">
-                    <div class="logo"><img src="${logoUrl}" alt="City of Panabo" /></div>
+                    <div class="logo logo-left"><img src="${panaboLogoUrl}" alt="City of Panabo" /></div>
                     <div class="header-text">
                         <div>Republic of the Philippines</div>
                         <div class="line-2">Province of Davao del Norte</div>
                         <div class="line-3">City of Panabo</div>
                         <div class="line-4">City Planning &amp; Development Office</div>
-                        <div class="line-5">Telefax 084-822-6017 &nbsp; e-mail address: cpdupanabo@gmail.com</div>
+                        <div class="line-5">Tel. (084) 823-4600 &nbsp; e-mail address: cpdopanabo@gmail.com</div>
                     </div>
+                    <div class="logo logo-right"><img src="${cpdoLogoUrl}" alt="City Planning and Development Office" /></div>
                 </div>
             </div>
             <h1 class="doc-title">Evaluation Report</h1>
@@ -64,119 +131,122 @@ function buildEvaluationReportHtml(document: Document, report: InspectionReport,
                 </tr>
             </table>
 
-            <p class="section-heading">A. APPLICANT AND PROJECT DESCRIPTION</p>
+            <p class="section-heading">I. APPLICANT AND PROJECT DESCRIPTION</p>
             <table class="fields">
                 <tr>
-                    <td class="label">1. Name of Applicant (Last, First, Middle)</td>
-                    <td class="value" colspan="3">${escapeHtml(display(prefill.applicantName))}</td>
+                    <td class="label">Name of Applicant</td>
+                    ${verifiedValueCell(report, "applicant_name", prefill.applicantName)}
                 </tr>
                 <tr>
-                    <td class="label">2. Name of Corporation</td>
-                    <td class="value" colspan="3">${escapeHtml(display(prefill.corporationName))}</td>
+                    <td class="label">Address of Applicant</td>
+                    ${verifiedValueCell(report, "applicant_address", prefill.applicantAddress)}
                 </tr>
                 <tr>
-                    <td class="label">3. Address of Applicant</td>
-                    <td class="value" colspan="3">${escapeHtml(display(prefill.applicantAddress))}</td>
+                    <td class="label">Name of Corporation</td>
+                    ${verifiedValueCell(report, "corporation_name", prefill.corporationName)}
                 </tr>
                 <tr>
-                    <td class="label">4. Address of Corporation</td>
-                    <td class="value" colspan="3">${escapeHtml(display(prefill.corporationAddress))}</td>
+                    <td class="label">Address of Corporation</td>
+                    ${verifiedValueCell(report, "corporation_address", prefill.corporationAddress)}
                 </tr>
                 <tr>
-                    <td class="label">5. Project Type</td>
-                    <td class="value" colspan="3">${escapeHtml(display(prefill.projectType))}</td>
+                    <td class="label">Project Type</td>
+                    ${verifiedValueCell(report, "project_type", prefill.projectType)}
+                </tr>
+                ${areaRows}
+                <tr>
+                    <td class="label">Project Location — Address</td>
+                    ${verifiedValueCell(report, "location", prefill.locationDetails || report.location_details || "")}
                 </tr>
                 <tr>
-                    <td class="label">6. Area (in sq.m.)</td>
-                    <td class="value pre" colspan="3">${escapeHtml(display(report.area_details ?? prefill.areaDetails))}</td>
+                    <td class="label">Landmark</td>
+                    <td class="value pre" colspan="3">${escapeHtml(display(report.landmark))}</td>
                 </tr>
                 <tr>
-                    <td class="label">7. Location</td>
-                    <td class="value pre" colspan="3">${escapeHtml(display(report.location_details ?? prefill.locationDetails))}</td>
+                    <td class="label">Geographic Coordinates</td>
+                    <td class="value" colspan="3">${escapeHtml(display(report.gps_coordinates))}</td>
+                </tr>
+                <tr>
+                    <td class="label">Project Zoning Classification</td>
+                    ${verifiedValueCell(report, "project_classification", prefill.projectClassification)}
                 </tr>
             </table>
 
-            <p class="section-heading">B. PROJECT EVALUATION</p>
+            <p class="section-heading">II. PROJECT EVALUATION</p>
             <table class="fields">
                 <tr>
-                    <td class="label">8. Project Life Span</td>
-                    <td class="value">${checkbox("Permanent", lifeSpan === "Permanent")} &nbsp; ${checkbox("Temporary", lifeSpan === "Temporary")}</td>
-                    <td class="label">9. Project Classification</td>
-                    <td class="value">${escapeHtml(display(prefill.projectClassification))}</td>
+                    <td class="label">Site Zoning Classification</td>
+                    ${verifiedValueCell(report, "site_zoning_classification", prefill.siteZoningClassification)}
                 </tr>
                 <tr>
-                    <td class="label">10. Site Zoning Classification</td>
-                    <td class="value">${escapeHtml(display(prefill.siteZoningClassification))}</td>
-                    <td class="label">11. Project Significance</td>
-                    <td class="value">${checkbox("Local Significance", significance === "Local Significance")} &nbsp; ${checkbox("National Significance", significance === "National Significance")}</td>
+                    <td class="label">Project Significance</td>
+                    <td class="value" colspan="3">${checkbox("Local Significance", significance === "Local Significance")} &nbsp; ${checkbox("National Significance", significance === "National Significance")}</td>
                 </tr>
                 <tr>
-                    <td class="label">12. Right Over Land</td>
+                    <td class="label">Right Over Land</td>
                     <td class="value" colspan="3">${escapeHtml(display(report.right_over_land))}</td>
                 </tr>
                 <tr>
-                    <td class="label">13. Date of Inspection</td>
-                    <td class="value">${escapeHtml(formatDate(report.inspection_date))}</td>
-                    <td class="label">GPS Coordinate</td>
-                    <td class="value">${escapeHtml(display(report.gps_coordinates))}</td>
+                    <td class="label">Date of Inspection</td>
+                    <td class="value" colspan="3">${escapeHtml(formatDate(report.inspection_date))}</td>
                 </tr>
                 <tr>
-                    <td class="label">14. Project Status as of Inspection Date</td>
+                    <td class="label">Project Status as of Inspection Date</td>
                     <td class="value" colspan="3">
-                        ${checkbox("Proposed", status === "Proposed")}
-                        ${checkbox("Operational", status === "Operational")}
-                        ${checkbox("Completed", status === "Completed")}
-                        ${checkbox("Others", status === "Others")}
-                        ${status && !["Proposed", "Operational", "Completed", "Others"].includes(status) ? escapeHtml(status) : ""}
+                        ${PROJECT_STATUS_OPTIONS.map((option) => checkbox(option, status === option)).join(" &nbsp; ")}
+                        ${status && !(PROJECT_STATUS_OPTIONS as readonly string[]).includes(status) ? escapeHtml(status) : ""}
                     </td>
                 </tr>
                 <tr>
-                    <td class="label">15. Are information provided in order?</td>
-                    <td class="value" colspan="3">
-                        ${checkbox("Yes", infoOrder === "yes")}
-                        ${checkbox("No (Specify Findings)", infoOrder === "no")}
-                        ${report.information_provided_findings ? ` — ${escapeHtml(report.information_provided_findings)}` : ""}
-                    </td>
-                </tr>
-                <tr>
-                    <td class="label">16. Existing Land Uses Abutting Lot Boundaries</td>
+                    <td class="label">Land Uses of Abutting Lots</td>
                     <td class="value" colspan="3">
                         North: ${escapeHtml(display(report.abutting_north))} &nbsp;
-                        South: ${escapeHtml(display(report.abutting_south))} &nbsp;
                         East: ${escapeHtml(display(report.abutting_east))} &nbsp;
+                        South: ${escapeHtml(display(report.abutting_south))} &nbsp;
                         West: ${escapeHtml(display(report.abutting_west))}
                     </td>
                 </tr>
                 <tr>
-                    <td class="label">17. Legal Bases</td>
-                    <td class="value" colspan="3">${escapeHtml(display(report.legal_bases))}</td>
+                    <td class="label">Distance from RROW Centerline to Nearest Building</td>
+                    <td class="value" colspan="3">${escapeHtml(display(report.distance_center_line_to_building))}</td>
                 </tr>
                 <tr>
-                    <td class="label">18. Findings/Evaluation of Facts</td>
-                    <td class="value pre" colspan="3">${escapeHtml(display(report.findings_evaluation))}</td>
+                    <td class="label">Project Lot Type</td>
+                    <td class="value">${escapeHtml(display(report.type_of_lot))}</td>
+                    <td class="label">Lacking Documents</td>
+                    <td class="value">${escapeHtml(display(report.lacking_documents))}</td>
                 </tr>
+                ${report.findings_evaluation?.trim() ? `<tr>
+                    <td class="label">Findings / Evaluation of Facts</td>
+                    <td class="value pre" colspan="3">${escapeHtml(display(report.findings_evaluation))}</td>
+                </tr>` : ""}
             </table>
 
             <table class="data-table">
                 <thead>
                     <tr>
-                        <th>Road Category</th>
+                        <th>Frontage</th>
+                        <th>Road Name</th>
                         <th>Standard RROW</th>
                         <th>Actual RROW</th>
-                        <th>Min. Required Setback</th>
-                        <th>As Per Plan</th>
+                        <th>Frontage (m)</th>
+                        <th>Setback Min. Requirement</th>
+                        <th>Setback As Per Plan</th>
                         <th>Remarks</th>
                     </tr>
                 </thead>
                 <tbody>
+                    ${frontages.map((road) => `
                     <tr>
-                        <td>${escapeHtml(display(report.road_category))}</td>
-                        <td>${escapeHtml(display(report.road_standard_rrow))}</td>
-                        <td>${escapeHtml(display(report.road_actual_rrow))}</td>
-                        <td>${escapeHtml(display(report.road_min_setback))}</td>
-                        <td>${escapeHtml(display(report.road_as_per_plan))}</td>
-                        <td>${escapeHtml(display(report.road_remarks))}</td>
-                    </tr>
+                        <td>${escapeHtml(display(road.label))}</td>
+                        <td>${escapeHtml(display(road.name))}</td>
+                        <td>${escapeHtml(display(road.standardRrow))}</td>
+                        <td>${escapeHtml(display(road.actualRrow))}</td>
+                        <td>${escapeHtml(display(road.frontage))}</td>
+                        <td>${escapeHtml(display(road.minSetback))}</td>
+                        <td>${escapeHtml(display(road.asPerPlan))}</td>
+                        <td>${escapeHtml(display(road.remarks))}</td>
+                    </tr>`).join("")}
                 </tbody>
             </table>
 
@@ -184,14 +254,16 @@ function buildEvaluationReportHtml(document: Document, report: InspectionReport,
                 <thead>
                     <tr>
                         <th>PD1096 — Rev. Building Code</th>
-                        <th>Parking Space Requirement</th>
+                        <th>Parking Minimum Requirement</th>
+                        <th>Parking As Per Plan</th>
                         <th>Remarks</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
                         <td>${escapeHtml(display(report.parking_building_code))}</td>
-                        <td>${escapeHtml(display(report.parking_space_requirement))}</td>
+                        <td>${escapeHtml(display(formatParkingSpaceRequirement(report.parking_space_requirement)))}</td>
+                        <td>${escapeHtml(display(formatParkingSpaceRequirement(report.parking_as_per_plan)))}</td>
                         <td>${escapeHtml(display(report.parking_remarks))}</td>
                     </tr>
                 </tbody>
@@ -199,7 +271,7 @@ function buildEvaluationReportHtml(document: Document, report: InspectionReport,
 
             <table class="fields">
                 <tr>
-                    <td class="label">19. Decision Recommended — Remarks</td>
+                    <td class="label">Recommendation</td>
                     <td class="value pre" colspan="3">${escapeHtml(display(report.decision_recommended))}</td>
                 </tr>
             </table>
@@ -221,13 +293,48 @@ function buildEvaluationReportHtml(document: Document, report: InspectionReport,
 }
 
 const PRINT_STYLES = `
-    @page { size: 8.5in 13in; margin: 0.5in 0.6in; }
+    @page {
+        size: 8.5in 13in;
+        margin: 0.5in 0.6in;
+    }
+    /* Keep first-page top margin at 0 so browser date/URL chrome stays off;
+       .page padding-top supplies the visual top spacing on page 1 only. */
+    @page :first {
+        margin-top: 0;
+        margin-right: 0.6in;
+        margin-bottom: 0.5in;
+        margin-left: 0.6in;
+    }
     * { box-sizing: border-box; }
-    body { font-family: "Times New Roman", Times, serif; margin: 0; color: #000; font-size: 10.5pt; line-height: 1.35; }
-    .page { max-width: 7.3in; margin: 0 auto; }
-    .header-band { border-top: 3px solid #1a5c2e; border-bottom: 1px solid #1a5c2e; padding: 8px 0 6px; margin-bottom: 8px; }
-    .header-row { display: grid; grid-template-columns: 72px 1fr; gap: 10px; align-items: center; }
+    html, body {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    body {
+        font-family: "Times New Roman", Times, serif;
+        color: #000;
+        font-size: 10.5pt;
+        line-height: 1.35;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+    .page {
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        padding: 0.5in 0 0;
+    }
+    .header-band {
+        border-top: 3px solid #1a5c2e;
+        border-bottom: 1px solid #1a5c2e;
+        padding: 8px 0 6px;
+        margin-bottom: 8px;
+        page-break-after: avoid;
+        break-after: avoid;
+    }
+    .header-row { display: grid; grid-template-columns: 72px 1fr 72px; gap: 10px; align-items: center; }
     .logo img { width: 68px; height: 68px; object-fit: contain; display: block; }
+    .logo-right { justify-self: end; }
     .header-text { text-align: center; font-size: 9pt; text-transform: uppercase; }
     .header-text .line-2, .header-text .line-3 { font-weight: 700; margin-top: 2px; }
     .header-text .line-3 { font-size: 11pt; }
@@ -240,26 +347,49 @@ const PRINT_STYLES = `
     table.fields td.label { width: 22%; font-weight: 700; background: #f3f4f6; }
     table.fields td.value { white-space: pre-wrap; }
     table.fields td.value.pre { font-family: inherit; }
-    table.data-table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+    table.data-table { width: 100%; border-collapse: collapse; margin: 8px 0; page-break-inside: auto; }
     table.data-table th, table.data-table td { border: 1px solid #000; padding: 4px 6px; font-size: 9pt; text-align: left; vertical-align: top; }
     table.data-table th { font-weight: 700; background: #e5e7eb; text-transform: uppercase; }
-    .signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 32px; }
+    table.data-table thead { display: table-header-group; }
+    table.data-table tr { page-break-inside: avoid; break-inside: avoid; }
+    .signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 32px; page-break-inside: avoid; }
     .signature-block { text-align: center; }
     .signature-line { border-bottom: 1px solid #000; min-height: 28px; margin: 24px 12px 4px; font-weight: 700; font-size: 10pt; }
     .signature-caption { font-size: 9pt; text-transform: uppercase; }
     .signature-role { font-size: 9pt; margin-top: 2px; }
-    @media print { body { margin: 0; } }
+    @media print {
+        @page {
+            size: 8.5in 13in;
+            margin: 0.5in 0.6in;
+        }
+        @page :first {
+            margin-top: 0;
+            margin-right: 0.6in;
+            margin-bottom: 0.5in;
+            margin-left: 0.6in;
+        }
+        html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        .page {
+            width: 100%;
+            max-width: none;
+            padding: 0.5in 0 0;
+        }
+    }
 `
 
 export function InspectionReportPrint({ document, report }: InspectionReportPrintProps) {
-  const logoUrl = PANABO_LOGO_PATH
+  const panaboLogoUrl = PANABO_LOGO_PATH
+  const cpdoLogoUrl = CPDO_LOGO_PATH
 
   return (
     <div id="inspection-report-print" className="bg-white text-black">
       <style>{PRINT_STYLES}</style>
       <div
         dangerouslySetInnerHTML={{
-          __html: buildEvaluationReportHtml(document, report, logoUrl),
+          __html: buildEvaluationReportHtml(document, report, panaboLogoUrl, cpdoLogoUrl),
         }}
       />
     </div>
@@ -267,39 +397,71 @@ export function InspectionReportPrint({ document, report }: InspectionReportPrin
 }
 
 export function printInspectionReport(document: Document, report: InspectionReport) {
+    const panaboLogoUrl = getPanaboLogoUrl()
+    const cpdoLogoUrl = getCpdoLogoUrl()
+    const body = buildEvaluationReportHtml(document, report, panaboLogoUrl, cpdoLogoUrl)
+
+    // Dedicated print window: @page :first keeps top margin 0 (no browser chrome),
+    // while later pages use 0.5in top margin so content is not flush to the edge.
     const printWindow = window.open("", "_blank", "width=900,height=700")
     if (!printWindow) {
         return
     }
 
-    const logoUrl = getPanaboLogoUrl()
-    const prefill = buildInspectionReportPrefill(document)
-    const body = buildEvaluationReportHtml(document, report, logoUrl)
-
+    printWindow.document.open()
     printWindow.document.write(`
         <!DOCTYPE html>
         <html lang="en">
         <head>
             <meta charset="UTF-8" />
-            <title>Evaluation Report - ${escapeHtml(prefill.locationalClearanceNumber)}</title>
-            <style>${PRINT_STYLES}</style>
+            <title></title>
+            <style>
+                ${PRINT_STYLES}
+            </style>
         </head>
         <body>
             ${body}
-            <script>
-                window.onload = function() {
-                    var img = document.querySelector(".logo img");
-                    function doPrint() { window.print(); }
-                    if (img && !img.complete) {
-                        img.onload = doPrint;
-                        img.onerror = doPrint;
-                    } else {
-                        doPrint();
-                    }
-                };
-            </script>
         </body>
         </html>
     `)
     printWindow.document.close()
+
+    const doPrint = () => {
+        let closed = false
+        const closeWindow = () => {
+            if (closed) return
+            closed = true
+            printWindow.removeEventListener("afterprint", closeWindow)
+            printWindow.close()
+        }
+        printWindow.addEventListener("afterprint", closeWindow)
+        printWindow.focus()
+        printWindow.print()
+        window.setTimeout(closeWindow, 1000)
+    }
+
+    const waitForImagesThenPrint = () => {
+        const images = Array.from(printWindow.document.images)
+        const pending = images.filter((img) => !img.complete)
+        if (pending.length === 0) {
+            doPrint()
+            return
+        }
+
+        let remaining = pending.length
+        const onDone = () => {
+            remaining -= 1
+            if (remaining <= 0) doPrint()
+        }
+        pending.forEach((img) => {
+            img.addEventListener("load", onDone, { once: true })
+            img.addEventListener("error", onDone, { once: true })
+        })
+    }
+
+    if (printWindow.document.readyState === "complete") {
+        waitForImagesThenPrint()
+    } else {
+        printWindow.addEventListener("load", waitForImagesThenPrint, { once: true })
+    }
 }

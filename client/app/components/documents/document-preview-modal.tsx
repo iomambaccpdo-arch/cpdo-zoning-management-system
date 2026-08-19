@@ -9,6 +9,7 @@ import {
     DialogTitle,
 } from "~/components/ui/dialog"
 import type { Document } from "~/api/DocumentService"
+import { formatZoningClassificationName } from "~/lib/zoning-utils"
 
 interface DocumentPreviewModalProps {
     document: Document | null
@@ -43,7 +44,10 @@ export function DocumentPreviewModal({ document, open, onClose }: DocumentPrevie
                     <section>
                         <h3 className="text-sm font-semibold mb-3 text-blue-700">Document Information</h3>
                         <div className="grid grid-cols-2 gap-4">
-                            <Field label="Zoning" value={document.zoning?.name} />
+                            <Field
+                                label="Zoning"
+                                value={formatZoningClassificationName(document.zoning?.name) || null}
+                            />
                             <Field label="Type of Project" value={document.project_type?.name} />
                             <Field label="Specific Project Type" value={document.specific_project_type?.name} />
                             <Field label="Date of Application" value={document.date_of_application ? format(new Date(document.date_of_application), "MMMM d, yyyy") : null} />
@@ -88,11 +92,45 @@ export function DocumentPreviewModal({ document, open, onClose }: DocumentPrevie
                     {/* Step 4 – Property */}
                     <section>
                         <h3 className="text-sm font-semibold mb-3 text-orange-700">Property Details</h3>
-                        <div className="grid grid-cols-2 gap-4">
-                            <Field label="Floor Area" value={document.floor_area ? `${document.floor_area} sqm` : null} />
-                            <Field label="Lot Area" value={document.lot_area ? `${document.lot_area} sqm` : null} />
-                            <Field label="Storey" value={document.storey} />
-                            <Field label="Mezzanine" value={document.mezanine} />
+                        <div className="space-y-4">
+                            {(document.buildings?.length ?? 0) > 0 && (
+                                <div className="space-y-2">
+                                    <p className="text-xs font-medium text-zinc-500 uppercase tracking-wide">Buildings</p>
+                                    {document.buildings?.map((building, index) => (
+                                        <div key={`preview-building-${index}`} className="grid grid-cols-2 gap-4">
+                                            <Field label={`Building ${index + 1} Name`} value={building.name} />
+                                            <Field
+                                                label={`Building ${index + 1} Area`}
+                                                value={building.area ? `${building.area} sqm` : null}
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            {(document.lots?.length ?? 0) > 0 && (
+                                <div className="space-y-2">
+                                    <p className="text-xs font-medium text-zinc-500 uppercase tracking-wide">Lots</p>
+                                    {document.lots?.map((lot, index) => (
+                                        <div key={`preview-lot-${index}`} className="grid grid-cols-2 gap-4">
+                                            <Field label={`Lot ${index + 1} Land Title / TCT`} value={lot.land_title} />
+                                            <Field
+                                                label={`Lot ${index + 1} Area`}
+                                                value={lot.area ? `${lot.area} sqm` : null}
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            {!(document.buildings?.length || document.lots?.length) && (
+                                <div className="grid grid-cols-2 gap-4">
+                                    <Field label="Floor Area" value={document.floor_area ? `${document.floor_area} sqm` : null} />
+                                    <Field label="Lot Area" value={document.lot_area ? `${document.lot_area} sqm` : null} />
+                                </div>
+                            )}
+                            <div className="grid grid-cols-2 gap-4">
+                                <Field label="Storey" value={document.storey} />
+                                <Field label="Mezzanine" value={document.mezanine} />
+                            </div>
                         </div>
                     </section>
 

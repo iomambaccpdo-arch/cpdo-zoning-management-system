@@ -27,9 +27,9 @@ class RolesAndPermissionsSeeder extends Seeder
         // Create Roles
         $superAdminRole = Role::firstOrCreate(['code' => 900], ['name' => 'Super Admin']);
         $coordinatorRole = Role::firstOrCreate(['code' => 800], ['name' => 'Coordinator']);
-        $sectionHeadRole = Role::firstOrCreate(['code' => 750], ['name' => 'Section Head']);
         $zoningOfficerRole = Role::firstOrCreate(['code' => 700], ['name' => 'Zoning Officer']);
         $zoningInspectorRole = Role::firstOrCreate(['code' => 600], ['name' => 'Zoning Inspector']);
+        $encoderClerkRole = Role::firstOrCreate(['code' => 650], ['name' => 'Encoder (Clerk)']);
 
         // Helper function to get permission IDs based on role config
         $getPermissionIds = function ($roleConfig) {
@@ -49,11 +49,11 @@ class RolesAndPermissionsSeeder extends Seeder
 
         $coordinatorRole->permissions()->sync($getPermissionIds(config('permissions.roles.coordinator')));
 
-        $sectionHeadRole->permissions()->sync($getPermissionIds(config('permissions.roles.section_head')));
-
         $zoningOfficerRole->permissions()->sync($getPermissionIds(config('permissions.roles.zoning_officer')));
 
         $zoningInspectorRole->permissions()->sync($getPermissionIds(config('permissions.roles.zoning_inspector')));
+
+        $encoderClerkRole->permissions()->sync($getPermissionIds(config('permissions.roles.encoder_clerk')));
 
         // Seed Users
         $superAdminUser = User::firstOrCreate([
@@ -96,6 +96,16 @@ class RolesAndPermissionsSeeder extends Seeder
             'password' => Hash::make('123456789'),
         ]);
 
+        $encoderUser = User::firstOrCreate([
+            'email' => 'encoder@example.com',
+        ], [
+            'first_name' => 'Maria',
+            'last_name' => 'Santos',
+            'designation' => 'Encoder (Clerk)',
+            'section' => 'Records Section',
+            'password' => Hash::make('123456789'),
+        ]);
+
         // Assign Roles to Users
         $superAdminUser->roles()->sync([$superAdminRole->id]);
 
@@ -104,6 +114,8 @@ class RolesAndPermissionsSeeder extends Seeder
         $officerUser->roles()->sync([$zoningOfficerRole->id]);
 
         $inspectorUser->roles()->sync([$zoningInspectorRole->id]);
+
+        $encoderUser->roles()->sync([$encoderClerkRole->id]);
 
     }
 }

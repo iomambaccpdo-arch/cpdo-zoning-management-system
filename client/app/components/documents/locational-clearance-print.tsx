@@ -1,163 +1,378 @@
 import type { LocationalClearanceData } from "~/lib/locational-clearance-utils"
-import { getPanaboLogoUrl } from "~/lib/public-assets"
+import { getLcFooterUrl, getLcHeaderUrl } from "~/lib/public-assets"
 
 function escapeHtml(value: string): string {
     return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 }
 
-function display(value: string | null | undefined): string {
-    return escapeHtml(value?.trim() || "_________________________")
+function blank(value: string | null | undefined): string {
+    const text = value?.trim() ?? ""
+    return text === "—" ? "" : text
 }
 
-function gridRow(labelLeft: string, valueLeft: string, labelRight?: string, valueRight?: string): string {
-    if (!labelRight) {
-        return `
-            <tr>
-                <td class="label">${escapeHtml(labelLeft)}</td>
-                <td class="value full" colspan="3">${display(valueLeft)}</td>
-            </tr>`
+function val(value: string | null | undefined, uppercase = true): string {
+    const text = blank(value)
+    if (!text) return ""
+    return escapeHtml(uppercase ? text.toUpperCase() : text)
+}
+
+function splitOfficer(combined: string): { name: string; designation: string } {
+    const text = blank(combined)
+    if (!text) return { name: "", designation: "" }
+
+    const comma = text.lastIndexOf(", ")
+    if (comma === -1) return { name: text, designation: "" }
+
+    return {
+        name: text.slice(0, comma).trim(),
+        designation: text.slice(comma + 2).trim(),
     }
-
-    return `
-        <tr>
-            <td class="label">${escapeHtml(labelLeft)}</td>
-            <td class="value">${display(valueLeft)}</td>
-            <td class="label">${escapeHtml(labelRight)}</td>
-            <td class="value">${display(valueRight)}</td>
-        </tr>`
 }
 
-function conditionsBlock(title: string, content: string): string {
-    const lines = content.split("\n").filter((line) => line.trim())
-    const body = lines
-        .map((line, index) => `<p class="condition-line">&#9632; ${index + 1}. ${escapeHtml(line.trim())}</p>`)
+function decisionNo(value: string): string {
+    const text = blank(value)
+    if (!text) return ""
+    if (/^LC-/i.test(text)) return text
+    return `LC-${text}`
+}
+
+function rightOverLandHtml(value: string | null | undefined): string {
+    const text = blank(value)
+    const normalized = text.toLowerCase()
+    const isOwner = normalized === "owner"
+    const isLeasee =
+        normalized === "leasee" ||
+        normalized === "lessee" ||
+        normalized.startsWith("lease,") ||
+        normalized.startsWith("lease ")
+    const isOthers = Boolean(text) && !isOwner && !isLeasee
+    const specify = isOthers ? text.toUpperCase() : ""
+
+    return `
+        <span class="rol">${isOwner ? "(X)" : "( )"} Owner</span>
+        <span class="rol">${isLeasee ? "(X)" : "( )"} Leasee</span>
+        <span class="rol">${isOthers ? "(X)" : "( )"} Others, specify :</span>
+        ${specify ? `<span class="data">${escapeHtml(specify)}</span>` : ""}
+    `
+}
+
+function conditionLines(content: string): string {
+    return content
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map(
+            (line) =>
+                `<p class="condition"><span class="bullet">&#9632;</span><span>${escapeHtml(line)}</span></p>`,
+        )
         .join("")
-
-    return `
-        <div class="conditions-section">
-            <p class="conditions-title">${escapeHtml(title)}</p>
-            ${body}
-        </div>`
 }
 
-function buildLocationalClearanceHtml(data: LocationalClearanceData, logoUrl: string): string {
+function stackedCell(label: string, valueHtml: string): string {
+    return `
+        <td>
+            <div class="lbl">${escapeHtml(label)}</div>
+            <div class="data">${valueHtml}</div>
+        </td>`
+}
+
+function inlineCell(label: string, valueHtml: string): string {
+    return `
+        <td>
+            <span class="lbl">${escapeHtml(label)}</span>
+            <span class="data">${valueHtml}</span>
+        </td>`
+}
+
+function buildLocationalClearanceHtml(
+    data: LocationalClearanceData,
+    headerUrl: string,
+    footerUrl: string,
+): string {
+    const recommending = splitOfficer(data.recommendingApprovalOfficer)
+    const approving = splitOfficer(data.approvingOfficer)
+
     return `
         <div class="page">
-            <div class="header-band">
-                <div class="header-row">
-                    <div class="logo"><img src="${logoUrl}" alt="City of Panabo" /></div>
-                    <div class="header-text">
-                        <div class="line-1">Republic of the Philippines</div>
-                        <div class="line-2">Province of Davao del Norte</div>
-                        <div class="line-3">City of Panabo</div>
-                        <div class="line-4">City Planning and Development Office</div>
-                    </div>
-                </div>
-            </div>
+            <img class="band header-band" src="${headerUrl}" alt="City Planning and Development Office" />
 
-            <div class="title-row">
-                <h1 class="doc-title">Locational Clearance</h1>
-                <span class="received-copy">CPDO Received Copy</span>
-            </div>
+            <h1 class="doc-title">LOCATIONAL CLEARANCE</h1>
+            <div class="received-copy">CPDO Received Copy</div>
 
-            <table class="grid-fields">
+            <table class="lc-table">
+                <colgroup>
+                    <col style="width:50%" />
+                    <col style="width:50%" />
+                </colgroup>
                 <tbody>
-                    ${gridRow("Application No.", data.applicationNumber, "Decision No.", data.decisionNumber)}
-                    ${gridRow("Date Received", data.dateReceived, "Date Approved", data.dateApproved)}
                     <tr>
-                        <td class="label">Date Complete Requirements Complied</td>
-                        <td class="value" colspan="3">${display(data.dateRequirementsComplied)}</td>
-                    </tr>
-                    ${gridRow("APPLICANT", data.applicantName, "NAME OF CORPORATION", data.corporationName)}
-                    ${gridRow("APPLICANT ADDRESS", data.applicantAddress, "ADDRESS OF CORPORATION", data.corporationAddress)}
-                    ${gridRow("TYPE OF PROJECT", data.projectType, "LOCATION", data.location)}
-                    ${gridRow("FLOOR AREA", data.floorArea, "LOT AREA", data.lotArea)}
-                    ${gridRow("FRONTAGE AT MAIN ROAD", data.frontageAtMainRoad, "TYPE OF LOT", data.typeOfLot)}
-                    ${gridRow(
-                        "STANDARD ROAD RIGHT OF WAY",
-                        data.standardRoadRightOfWay,
-                        "Distance from the center line of the Road to the Building",
-                        data.distanceCenterLineToBuilding,
-                    )}
-                    <tr>
-                        <td class="label">RIGHT OVER LAND</td>
-                        <td class="value full" colspan="3">${display(data.rightOverLand)}</td>
+                        ${inlineCell("Application No.:", val(data.applicationNumber, false))}
+                        ${inlineCell("Decision No.:", val(decisionNo(data.decisionNumber), false))}
                     </tr>
                     <tr>
-                        <td class="label">DECISION</td>
-                        <td class="value full" colspan="3">${display(data.decision)}</td>
+                        ${inlineCell("Date Received:", val(data.dateReceived, false))}
+                        ${inlineCell("Date Approved:", val(data.dateApproved, false))}
+                    </tr>
+                    <tr>
+                        <td colspan="2">
+                            <span class="lbl">Date Complete Requirements Complied:</span>
+                            <span class="data">${val(data.dateRequirementsComplied, false)}</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        ${stackedCell("APPLICANT:", val(data.applicantName))}
+                        ${stackedCell("NAME OF CORPORATION :", val(data.corporationName))}
+                    </tr>
+                    <tr>
+                        ${stackedCell("APPLICANT ADDRESS:", val(data.applicantAddress))}
+                        ${stackedCell("ADDRESS OF CORPORATION :", val(data.corporationAddress))}
+                    </tr>
+                    <tr>
+                        ${stackedCell("TYPE OF PROJECT:", val(data.projectType))}
+                        ${stackedCell("LOCATION :", val(data.location))}
+                    </tr>
+                    <tr>
+                        ${stackedCell("FLOOR AREA:", val(data.floorArea))}
+                        ${stackedCell("LOT AREA:", val(data.lotArea))}
+                    </tr>
+                    <tr>
+                        ${stackedCell("FRONTAGE AT MAIN ROAD:", val(data.frontageAtMainRoad))}
+                        ${stackedCell("TYPE OF LOT:", val(data.typeOfLot))}
+                    </tr>
+                    <tr>
+                        ${stackedCell("STANDARD ROAD RIGHT OF WAY:", val(data.standardRoadRightOfWay))}
+                        ${stackedCell(
+                            "Distance from the center line of the Road to the Building:",
+                            val(data.distanceCenterLineToBuilding),
+                        )}
+                    </tr>
+                    <tr>
+                        <td colspan="2">
+                            <div class="lbl">RIGHT OVER LAND</div>
+                            <div class="rol-row">${rightOverLandHtml(data.rightOverLand)}</div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td colspan="2">
+                            <div class="lbl">DECISION :</div>
+                            <div class="data decision">${escapeHtml(blank(data.decision) || "LC- Granted and subject to the condition below:")}</div>
+                        </td>
                     </tr>
                 </tbody>
             </table>
 
-            ${conditionsBlock("Conditions", data.conditions)}
-            ${conditionsBlock("Additional Conditions", data.additionalConditions)}
-
-            <p class="authority-line">BY AUTHORITY OF THE LCE:</p>
+            <section class="conditions">
+                <p class="conditions-title">CONDITIONS:</p>
+                ${conditionLines(data.conditions)}
+                <p class="additional-title">Additional Conditions</p>
+                ${conditionLines(data.additionalConditions)}
+            </section>
 
             <div class="signatures">
-                <div class="signature-block">
-                    <p class="signature-label">Recommending Approval:</p>
-                    <div class="signature-line">${display(data.recommendingApprovalOfficer)}</div>
-                    <div class="payment-block">
-                        <p>OR No. ${display(data.orNumber)}</p>
-                        <p>Amount Paid ${display(data.amountPaid)}</p>
-                        <p>Date Paid ${display(data.datePaid)}</p>
-                    </div>
+                <div class="sig left">
+                    <p class="authority authority-spacer" aria-hidden="true">&nbsp;</p>
+                    <p class="sig-label">Recommending Approval:</p>
+                    <div class="sig-space"></div>
+                    <p class="officer-name">${escapeHtml(recommending.name)}</p>
+                    <p class="officer-title">${escapeHtml(recommending.designation || "Zoning Officer III")}</p>
                 </div>
-                <div class="signature-block">
-                    <p class="signature-label">Approved by:</p>
-                    <div class="signature-line">${display(data.approvingOfficer)}</div>
-                    <div class="dates-block">
-                        <p>Date of Inspection: ${display(data.dateOfInspection)}</p>
-                        <p>Date of LC Prepared: ${display(data.dateOfLcPrepared)}</p>
-                    </div>
+                <div class="sig right">
+                    <p class="authority">BY AUTHORITY OF THE LCE:</p>
+                    <p class="sig-label">Approved by:</p>
+                    <div class="sig-space"></div>
+                    <p class="officer-name">${escapeHtml(approving.name)}</p>
+                    <p class="officer-title">${escapeHtml(approving.designation || "City Planning & Development Coordinator")}</p>
                 </div>
             </div>
 
-            <div class="footer-band">
-                <div class="footer-main">City Planning &amp; Development Office — City of Panabo</div>
-                <div>New City Hall Bldg., Panabo City · (084) 823-4600 · (084) 822-7415 · katcpdopanabo@gmail.com</div>
+            <div class="meta-row">
+                <div class="meta left">
+                    <p>OR No: ${escapeHtml(blank(data.orNumber))}</p>
+                    <p>Amount Paid: ${escapeHtml(blank(data.amountPaid))}</p>
+                    <p>Date Paid: ${escapeHtml(blank(data.datePaid))}</p>
+                </div>
+                <div class="meta right">
+                    <p>Date of Inspection: ${escapeHtml(blank(data.dateOfInspection))}</p>
+                    <p>Date of LC Prepared: ${escapeHtml(blank(data.dateOfLcPrepared))}</p>
+                </div>
+            </div>
+
+            <div class="footer-wrap">
+                <img class="band footer-band" src="${footerUrl}" alt="" />
             </div>
         </div>
     `
 }
 
 const PRINT_STYLES = `
-    @page { size: 8.5in 13in; margin: 0.55in 0.65in 0.6in 0.65in; }
+    @page { size: 8.5in 14in; margin: 0.25in 0.3in 0.15in 0.3in; }
     * { box-sizing: border-box; }
-    body { font-family: "Times New Roman", Times, serif; color: #000; margin: 0; font-size: 11pt; line-height: 1.35; }
-    .page { width: 100%; max-width: 7.2in; margin: 0 auto; }
-    .header-band { border-top: 3px solid #1a5c2e; border-bottom: 1px solid #1a5c2e; padding: 10px 0 8px; margin-bottom: 10px; }
-    .header-row { display: grid; grid-template-columns: 80px 1fr; gap: 12px; align-items: center; }
-    .logo img { width: 72px; height: 72px; object-fit: contain; display: block; }
-    .header-text { text-align: center; }
-    .header-text .line-1 { font-size: 9pt; letter-spacing: 0.08em; text-transform: uppercase; }
-    .header-text .line-2, .header-text .line-3 { font-size: 10pt; font-weight: 700; text-transform: uppercase; margin-top: 2px; }
-    .header-text .line-3 { font-size: 11pt; }
-    .header-text .line-4 { font-size: 10pt; font-weight: 700; text-transform: uppercase; margin-top: 4px; color: #1a5c2e; }
-    .title-row { display: flex; align-items: flex-end; justify-content: center; gap: 16px; margin: 14px 0 10px; position: relative; }
-    .doc-title { text-align: center; font-size: 14pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; margin: 0; text-decoration: underline; text-underline-offset: 4px; }
-    .received-copy { font-size: 8pt; position: absolute; right: 0; bottom: 2px; }
-    table.grid-fields { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
-    table.grid-fields td { border: 1px solid #000; padding: 5px 8px; vertical-align: top; font-size: 10pt; }
-    table.grid-fields td.label { width: 22%; font-weight: 700; background: #f3f4f6; }
-    table.grid-fields td.value { width: 28%; white-space: pre-wrap; }
-    table.grid-fields td.value.full { width: auto; }
-    .conditions-section { border: 1px solid #000; padding: 10px 12px; margin-bottom: 12px; page-break-inside: avoid; }
-    .conditions-title { font-weight: 700; text-transform: uppercase; font-size: 10pt; margin: 0 0 8px; text-decoration: underline; }
-    .condition-line { margin: 0 0 6px; font-size: 10pt; white-space: pre-wrap; }
-    .authority-line { font-size: 9.5pt; text-align: right; margin: 8px 0 4px; font-weight: 700; }
-    .signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-top: 20px; page-break-inside: avoid; }
-    .signature-block { text-align: center; }
-    .signature-label { font-size: 9.5pt; margin: 0 0 4px; }
-    .signature-line { border-bottom: 1px solid #000; min-height: 28px; margin: 28px 16px 4px; font-weight: 700; font-size: 10pt; padding-bottom: 2px; }
-    .signature-caption { font-size: 9pt; margin: 0; }
-    .payment-block, .dates-block { margin-top: 16px; font-size: 9pt; text-align: left; padding-left: 16px; }
-    .payment-block p, .dates-block p { margin: 0 0 4px; }
-    .footer-band { margin-top: 20px; border-top: 2px solid #1a5c2e; padding-top: 6px; text-align: center; font-size: 8.5pt; color: #444; }
-    .footer-band .footer-main { font-weight: 700; text-transform: uppercase; color: #1a5c2e; font-size: 9pt; }
-    @media print { body { margin: 0; } .page { max-width: none; } }
+    html, body {
+        height: 100%;
+    }
+    body {
+        margin: 0;
+        color: #000;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 11.5pt;
+        line-height: 1.2;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+    .page {
+        width: 100%;
+        margin: 0 auto;
+        min-height: 13.6in;
+        display: flex;
+        flex-direction: column;
+    }
+    .band {
+        display: block;
+        width: 100%;
+        max-width: none;
+    }
+    .header-band {
+        height: 1.15in;
+        object-fit: fill;
+        object-position: center top;
+        margin: 0 0 2px;
+        flex: 0 0 auto;
+    }
+    .footer-wrap {
+        width: 100%;
+        margin-top: auto;
+        overflow: hidden;
+        line-height: 0;
+        text-align: left;
+        background: #007236;
+        flex: 0 0 auto;
+    }
+    .footer-band {
+        width: 100%;
+        height: 0.78in;
+        object-fit: cover;
+        object-position: left center;
+        margin: 0;
+        display: block;
+    }
+    .doc-title {
+        text-align: center;
+        font-size: 17.5pt;
+        font-weight: 700;
+        margin: 2px 0 0;
+        letter-spacing: 0.01em;
+        flex: 0 0 auto;
+    }
+    .received-copy {
+        text-align: right;
+        font-size: 11.5pt;
+        font-weight: 700;
+        margin: 0 2px 4px;
+        flex: 0 0 auto;
+    }
+    table.lc-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        margin-bottom: 6px;
+        flex: 0 0 auto;
+    }
+    table.lc-table td {
+        border: 1px solid #000;
+        padding: 3px 5px 4px;
+        vertical-align: top;
+        font-size: 11.5pt;
+    }
+    .lbl { font-weight: 700; }
+    .data {
+        font-weight: 700;
+        white-space: pre-wrap;
+        min-height: 1.15em;
+    }
+    .decision { font-weight: 400; }
+    .rol { margin-right: 10px; white-space: nowrap; }
+    .rol-row { margin-top: 2px; }
+    .conditions { margin: 6px 2px 8px; flex: 0 0 auto; }
+    .conditions-title {
+        text-align: center;
+        font-weight: 700;
+        font-size: 11.5pt;
+        margin: 0 0 4px;
+    }
+    .additional-title {
+        font-weight: 700;
+        font-size: 10.5pt;
+        margin: 6px 0 3px;
+    }
+    .condition {
+        display: grid;
+        grid-template-columns: 14px 1fr;
+        gap: 4px;
+        margin: 0 0 2px;
+        font-size: 10.5pt;
+        font-weight: 400;
+        align-items: start;
+    }
+    .condition .bullet {
+        font-size: 9pt;
+        line-height: 1.35;
+    }
+    .signatures {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        column-gap: 28px;
+        margin: 8px 4px 0;
+        page-break-inside: avoid;
+        flex: 0 0 auto;
+        align-items: start;
+    }
+    .sig { text-align: center; }
+    .authority {
+        font-weight: 700;
+        font-size: 10.5pt;
+        margin: 0 0 6px;
+        text-align: left;
+        min-height: 1.25em;
+        line-height: 1.25em;
+    }
+    .authority-spacer {
+        visibility: hidden;
+    }
+    .sig-label {
+        text-align: left;
+        font-size: 11.5pt;
+        margin: 0;
+    }
+    .sig-space { height: 40px; }
+    .officer-name {
+        font-weight: 700;
+        font-size: 10.5pt;
+        margin: 0;
+    }
+    .officer-title {
+        font-size: 10.5pt;
+        margin: 0;
+    }
+    .meta-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        column-gap: 28px;
+        margin: 16px 4px 10px;
+        font-size: 9.5pt;
+        page-break-inside: avoid;
+        flex: 0 0 auto;
+    }
+    .meta p { margin: 0 0 2px; }
+    .meta.left { text-align: left; padding-left: 0; }
+    .meta.right { text-align: left; }
+    @media print {
+        html, body { height: auto; }
+        body { margin: 0; }
+        .page {
+            max-width: none;
+            min-height: calc(14in - 0.4in);
+        }
+    }
 `
 
 export function printLocationalClearance(data: LocationalClearanceData) {
@@ -166,8 +381,9 @@ export function printLocationalClearance(data: LocationalClearanceData) {
         return
     }
 
-    const logoUrl = getPanaboLogoUrl()
-    const body = buildLocationalClearanceHtml(data, logoUrl)
+    const headerUrl = getLcHeaderUrl()
+    const footerUrl = getLcFooterUrl()
+    const body = buildLocationalClearanceHtml(data, headerUrl, footerUrl)
 
     printWindow.document.write(`
         <!DOCTYPE html>
@@ -181,14 +397,20 @@ export function printLocationalClearance(data: LocationalClearanceData) {
             ${body}
             <script>
                 window.onload = function() {
-                    var img = document.querySelector(".logo img");
+                    var images = Array.prototype.slice.call(document.images || []);
+                    var pending = images.filter(function(img) { return !img.complete; }).length;
                     function doPrint() { window.print(); }
-                    if (img && !img.complete) {
-                        img.onload = doPrint;
-                        img.onerror = doPrint;
-                    } else {
+                    if (!pending) {
                         doPrint();
+                        return;
                     }
+                    images.forEach(function(img) {
+                        if (img.complete) return;
+                        img.onload = img.onerror = function() {
+                            pending -= 1;
+                            if (pending <= 0) doPrint();
+                        };
+                    });
                 };
             </script>
         </body>

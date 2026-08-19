@@ -8,6 +8,9 @@ use App\Models\DocumentAttachment;
 use App\Models\DueDateExtension;
 use App\Models\User;
 use App\Support\ActivityLogger;
+use App\Support\DocumentAuthorization;
+use App\Support\DocumentPropertyDetails;
+use App\Support\DocumentStatus;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -21,10 +24,16 @@ class DocumentController extends Controller
     // ---------------------------------------------------------------
     public function dashboard(Request $request)
     {
+        /** @var User $user */
+        $user = Auth::user();
+        $user->loadMissing('roles');
+
         $year = (int) $request->query('year', Carbon::now()->year);
 
-        // Count documents per month for the given year (PostgreSQL-compatible)
-        $rows = Document::selectRaw('EXTRACT(MONTH FROM created_at)::integer as month, COUNT(*) as count')
+        $documentQuery = DocumentAuthorization::scopeForUser(Document::query(), $user);
+
+        $rows = (clone $documentQuery)
+            ->selectRaw('EXTRACT(MONTH FROM created_at)::integer as month, COUNT(*) as count')
             ->whereYear('created_at', $year)
             ->groupByRaw('EXTRACT(MONTH FROM created_at)')
             ->get()
@@ -39,22 +48,39 @@ class DocumentController extends Controller
             ];
         }
 
-        // 10 most-recent attachments across all documents
-        $recentAttachments = DocumentAttachment::with('document:id,document_title')
+        $recentAttachmentsQuery = DocumentAttachment::with('document:id,document_title')
             ->orderByDesc('created_at')
-            ->limit(10)
-            ->get(['id', 'document_id', 'file_name', 'file_type', 'file_size', 'created_at']);
+            ->limit(10);
 
-        $overdueCount = Document::query()
-            ->whereNotNull('due_date')
-            ->whereDate('due_date', '<', Carbon::today())
-            ->whereIn('status', ['pending', 'processing'])
-            ->count();
+        if (DocumentAuthorization::isEncoder($user)) {
+            $documentIds = (clone $documentQuery)->pluck('id');
+            $recentAttachmentsQuery->whereIn('document_id', $documentIds);
+        }
+
+        $recentAttachments = $recentAttachmentsQuery->get(['id', 'document_id', 'file_name', 'file_type', 'file_size', 'created_at']);
+
+        $overdueCount = DocumentAuthorization::isEncoder($user)
+            ? 0
+            : Document::query()
+                ->whereNotNull('due_date')
+                ->whereDate('due_date', '<', Carbon::today())
+                ->whereIn('status', DocumentStatus::overdueEligible())
+                ->count();
+
+        $encodingCount = DocumentAuthorization::isEncoder($user)
+            ? (clone $documentQuery)->where('status', DocumentStatus::ENCODING)->count()
+            : 0;
+
+        $returnedCount = DocumentAuthorization::isEncoder($user)
+            ? (clone $documentQuery)->where('status', DocumentStatus::RETURNED)->count()
+            : 0;
 
         return response()->json([
             'monthly_counts' => $months,
             'recent_attachments' => $recentAttachments,
             'overdue_count' => $overdueCount,
+            'encoding_count' => $encodingCount,
+            'returned_count' => $returnedCount,
         ]);
     }
 
@@ -82,33 +108,38 @@ class DocumentController extends Controller
 
     public function store(Request $request)
     {
-        $validatedData = $request->validate([
-            'documentTitle' => 'required|string',
-            'zoning' => 'required|exists:zonings,id',
-            'zoningApplicationNo' => 'required|string',
-            'typeOfProject' => 'required|exists:project_types,id',
-            'specificProjectType' => $this->specificProjectTypeRule($request),
-            'dueDate' => 'nullable|string',
-            'applicantName' => 'required|string',
-            'assistedBy' => 'nullable|string',
-            'oic' => 'nullable|string',
-            'barangay' => 'required|exists:barangays,id',
-            'purok' => 'required|exists:puroks,id',
-            'landmark' => 'required|string',
-            'coordinates' => 'nullable|string',
-            'floorArea' => 'required|string',
-            'lotArea' => 'required|string',
-            'storey' => 'required|string',
-            'mezanine' => 'nullable|string',
-            'routedTo' => 'required|array',
-            'routedTo.*' => 'exists:users,id',
-            ...$this->pdfUploadRules(required: true),
-        ]);
+        /** @var User $user */
+        $user = Auth::user();
+        $user->loadMissing('roles');
+
+        $isEncoder = DocumentAuthorization::isEncoder($user);
+        $saveAsDraft = $request->boolean('saveAsDraft');
+        $submitForProcessing = $request->boolean('submitForProcessing');
+
+        if ($isEncoder && $submitForProcessing) {
+            $validatedData = $request->validate($this->fullDocumentRules($request, requireFiles: true, requireRoutedTo: true));
+            $status = DocumentStatus::ENCODED;
+        } elseif ($isEncoder && $saveAsDraft) {
+            $validatedData = $request->validate($this->draftDocumentRules($request));
+            $status = DocumentStatus::ENCODING;
+        } elseif ($isEncoder) {
+            $validatedData = $request->validate($this->fullDocumentRules($request, requireFiles: true, requireRoutedTo: true));
+            $status = DocumentStatus::ENCODING;
+        } else {
+            $validatedData = $request->validate($this->fullDocumentRules($request, requireFiles: true, requireRoutedTo: true));
+            $status = DocumentStatus::ENCODED;
+        }
 
         try {
             DB::beginTransaction();
 
-            // 1. Create the Document
+            $propertyDetails = DocumentPropertyDetails::fromRequestPayload(
+                $validatedData['buildings'] ?? null,
+                $validatedData['lots'] ?? null,
+                $validatedData['floorArea'] ?? '',
+                $validatedData['lotArea'] ?? '',
+            );
+
             $document = Document::create([
                 'document_title' => $validatedData['documentTitle'],
                 'zoning_id' => $validatedData['zoning'],
@@ -116,28 +147,33 @@ class DocumentController extends Controller
                 'project_type_id' => $validatedData['typeOfProject'],
                 'specific_project_type_id' => $validatedData['specificProjectType'] === 'N/A' ? null : (int) $validatedData['specificProjectType'],
                 'date_of_application' => Carbon::now()->format('Y-m-d'),
-                'due_date' => $validatedData['dueDate'] ? Carbon::parse($validatedData['dueDate'])->format('Y-m-d') : null,
+                'due_date' => ! empty($validatedData['dueDate']) ? Carbon::parse($validatedData['dueDate'])->format('Y-m-d') : null,
                 'applicant_name' => $validatedData['applicantName'],
+                'corporation_name' => $validatedData['corporationName'] ?? null,
+                'corporation_address' => $validatedData['corporationAddress'] ?? null,
                 ...$this->receivedByFields(),
                 'assisted_by' => $validatedData['assistedBy'] ?? null,
-                'oic' => $validatedData['oic'] ?? '',
+                'oic' => $isEncoder ? '' : ($validatedData['oic'] ?? ''),
                 'barangay_id' => $validatedData['barangay'],
                 'purok_id' => $validatedData['purok'],
                 'landmark' => $validatedData['landmark'],
                 'coordinates' => $validatedData['coordinates'] ?? null,
-                'floor_area' => $validatedData['floorArea'],
-                'lot_area' => $validatedData['lotArea'],
-                'storey' => $validatedData['storey'],
+                'buildings' => $propertyDetails['buildings'],
+                'lots' => $propertyDetails['lots'],
+                'floor_area' => $propertyDetails['floor_area'],
+                'lot_area' => $propertyDetails['lot_area'],
+                'storey' => $validatedData['storey'] ?? '',
                 'mezanine' => $validatedData['mezanine'] ?? null,
+                'status' => $status,
             ]);
 
-            // 2. Attach routes (Users)
             if (! empty($validatedData['routedTo'])) {
                 $document->routedToUsers()->attach($validatedData['routedTo']);
             }
 
-            // 3. Process File Uploads
-            $this->storeUploadedFiles($document, $request->file('files'));
+            if ($request->hasFile('files')) {
+                $this->storeUploadedFiles($document, $request->file('files'));
+            }
 
             DB::commit();
 
@@ -148,16 +184,28 @@ class DocumentController extends Controller
                 "Created document: {$document->document_title} ({$document->zoning_application_no})"
             );
 
-            // 4. Dispatch Email Jobs
-            if (! empty($validatedData['routedTo'])) {
+            if ($status === DocumentStatus::ENCODED) {
+                ActivityLogger::log(
+                    'update',
+                    'documents',
+                    $document->zoning_application_no,
+                    "Updated document status for: {$document->document_title} ({$document->zoning_application_no}) to encoded"
+                );
+            }
+
+            if ($status === DocumentStatus::ENCODED && ! empty($validatedData['routedTo'])) {
                 $routedUsers = User::whereIn('id', $validatedData['routedTo'])->get();
-                foreach ($routedUsers as $user) {
-                    SendDocumentRoutedEmail::dispatch($document, $user);
+                foreach ($routedUsers as $routedUser) {
+                    SendDocumentRoutedEmail::dispatch($document, $routedUser);
                 }
             }
 
             return response()->json([
-                'message' => 'Document created successfully.',
+                'message' => $status === DocumentStatus::ENCODING
+                    ? 'Application draft saved successfully.'
+                    : ($status === DocumentStatus::ENCODED
+                        ? 'Application submitted successfully.'
+                        : 'Document created successfully.'),
                 'document' => $document->load(['attachments', 'routedToUsers', 'receivedByUser']),
             ], 201);
 
@@ -173,13 +221,20 @@ class DocumentController extends Controller
 
     public function index(Request $request)
     {
+        /** @var User $user */
+        $user = Auth::user();
+        $user->loadMissing('roles');
+
         $perPage = $request->query('per_page', 15);
         $search = $request->query('search', '');
         $year = $request->query('year');
         $month = $request->query('month');
+        $status = $request->query('status');
 
-        $query = Document::with(['zoning', 'projectType', 'specificProjectType', 'barangay', 'purok', 'routedToUsers', 'attachments', 'receivedByUser'])
-            ->latest();
+        $query = DocumentAuthorization::scopeForUser(
+            Document::with(['zoning', 'projectType', 'specificProjectType', 'barangay', 'purok', 'routedToUsers', 'attachments', 'receivedByUser']),
+            $user
+        )->latest();
 
         if ($search) {
             $query->where(function ($q) use ($search) {
@@ -218,6 +273,10 @@ class DocumentController extends Controller
             $query->whereMonth('created_at', (int) $month);
         }
 
+        if ($status) {
+            $query->where('status', $status);
+        }
+
         return response()->json($query->paginate($perPage));
     }
 
@@ -229,7 +288,7 @@ class DocumentController extends Controller
         $paginator = Document::query()
             ->whereNotNull('due_date')
             ->whereDate('due_date', '<', $today)
-            ->whereIn('status', ['pending', 'processing'])
+            ->whereIn('status', DocumentStatus::overdueEligible())
             ->with(['projectType', 'barangay', 'purok'])
             ->orderBy('due_date')
             ->paginate($perPage);
@@ -245,6 +304,16 @@ class DocumentController extends Controller
 
     public function show(Document $document)
     {
+        /** @var User $user */
+        $user = Auth::user();
+        $user->loadMissing('roles');
+
+        if (! $this->userCanAccessDocument($user, $document)) {
+            return response()->json([
+                'message' => 'You are not allowed to view this application.',
+            ], 403);
+        }
+
         return response()->json(
             $document->load([
                 'zoning',
@@ -263,8 +332,19 @@ class DocumentController extends Controller
 
     public function attachments(Document $document)
     {
+        /** @var User $user */
+        $user = Auth::user();
+        $user->loadMissing('roles');
+
+        if (! $this->userCanAccessDocument($user, $document)) {
+            return response()->json([
+                'message' => 'You are not allowed to view attachments for this application.',
+            ], 403);
+        }
+
         return response()->json(
             $document->attachments()
+                ->where('attachment_type', '!=', 'inspection_photo')
                 ->with('uploader:id,first_name,last_name')
                 ->latest()
                 ->get()
@@ -273,6 +353,16 @@ class DocumentController extends Controller
 
     public function uploadAttachments(Request $request, Document $document)
     {
+        /** @var User $user */
+        $user = Auth::user();
+        $user->loadMissing('roles');
+
+        if (! DocumentAuthorization::canManageDocument($user, $document)) {
+            return response()->json([
+                'message' => 'You are not allowed to upload attachments for this application.',
+            ], 403);
+        }
+
         $request->validate([
             'files' => 'required|array|min:1|max:'.config('uploads.max_files_per_request'),
             'files.*' => 'file|mimes:pdf|max:'.config('uploads.max_file_size_kb'),
@@ -308,32 +398,45 @@ class DocumentController extends Controller
 
     public function update(Request $request, Document $document)
     {
-        $validatedData = $request->validate([
-            'documentTitle' => 'required|string',
-            'zoning' => 'required|exists:zonings,id',
-            'zoningApplicationNo' => 'required|string',
-            'typeOfProject' => 'required|exists:project_types,id',
-            'specificProjectType' => $this->specificProjectTypeRule($request),
-            'applicantName' => 'required|string',
-            'assistedBy' => 'nullable|string',
-            'oic' => 'required|string',
-            'barangay' => 'required|exists:barangays,id',
-            'purok' => 'required|exists:puroks,id',
-            'landmark' => 'required|string',
-            'coordinates' => 'nullable|string',
-            'floorArea' => 'required|string',
-            'lotArea' => 'required|string',
-            'storey' => 'required|string',
-            'mezanine' => 'nullable|string',
-            'routedTo' => 'required|array',
-            'routedTo.*' => 'exists:users,id',
-            ...$this->pdfUploadRules(),
-        ]);
+        /** @var User $user */
+        $user = Auth::user();
+        $user->loadMissing('roles');
+
+        if (! DocumentAuthorization::canManageDocument($user, $document)) {
+            return response()->json([
+                'message' => 'You are not allowed to edit this application.',
+            ], 403);
+        }
+
+        $isEncoder = DocumentAuthorization::isEncoder($user);
+        $saveAsDraft = $request->boolean('saveAsDraft');
+        $submitForProcessing = $request->boolean('submitForProcessing');
+
+        if ($isEncoder && $submitForProcessing) {
+            $validatedData = $request->validate($this->fullDocumentRules($request, requireFiles: false, requireRoutedTo: true));
+        } elseif ($isEncoder && $saveAsDraft) {
+            $validatedData = $request->validate($this->draftDocumentRules($request));
+        } elseif ($isEncoder) {
+            $validatedData = $request->validate($this->fullDocumentRules($request, requireFiles: false, requireRoutedTo: false));
+        } else {
+            $validatedData = $request->validate($this->fullDocumentRules($request, requireFiles: false, requireRoutedTo: true, requireOic: true));
+        }
 
         try {
             DB::beginTransaction();
 
-            $document->update([
+            $propertyDetails = DocumentPropertyDetails::fromRequestPayload(
+                array_key_exists('buildings', $validatedData)
+                    ? ($validatedData['buildings'] ?? [])
+                    : $document->buildings,
+                array_key_exists('lots', $validatedData)
+                    ? ($validatedData['lots'] ?? [])
+                    : $document->lots,
+                $validatedData['floorArea'] ?? $document->floor_area,
+                $validatedData['lotArea'] ?? $document->lot_area,
+            );
+
+            $updateData = [
                 'document_title' => $validatedData['documentTitle'],
                 'zoning_id' => $validatedData['zoning'],
                 'zoning_application_no' => $validatedData['zoningApplicationNo'],
@@ -341,23 +444,39 @@ class DocumentController extends Controller
                 'specific_project_type_id' => $validatedData['specificProjectType'] === 'N/A' ? null : (int) $validatedData['specificProjectType'],
                 'date_of_application' => Carbon::now()->format('Y-m-d'),
                 'applicant_name' => $validatedData['applicantName'],
+                'corporation_name' => $validatedData['corporationName'] ?? null,
+                'corporation_address' => $validatedData['corporationAddress'] ?? null,
                 ...$this->receivedByFields(),
                 'assisted_by' => $validatedData['assistedBy'] ?? null,
-                'oic' => $validatedData['oic'],
                 'barangay_id' => $validatedData['barangay'],
                 'purok_id' => $validatedData['purok'],
                 'landmark' => $validatedData['landmark'],
                 'coordinates' => $validatedData['coordinates'] ?? null,
-                'floor_area' => $validatedData['floorArea'],
-                'lot_area' => $validatedData['lotArea'],
-                'storey' => $validatedData['storey'],
+                'buildings' => $propertyDetails['buildings'],
+                'lots' => $propertyDetails['lots'],
+                'floor_area' => $propertyDetails['floor_area'],
+                'lot_area' => $propertyDetails['lot_area'],
+                'storey' => $validatedData['storey'] ?? $document->storey,
                 'mezanine' => $validatedData['mezanine'] ?? null,
-            ]);
+            ];
 
-            // Sync routedTo users
-            $document->routedToUsers()->sync($validatedData['routedTo']);
+            if (! $isEncoder) {
+                $updateData['oic'] = $validatedData['oic'];
+            }
 
-            // Append new file uploads (keep existing attachments)
+            if ($isEncoder && $submitForProcessing) {
+                $updateData['status'] = DocumentStatus::ENCODED;
+            } elseif ($isEncoder) {
+                $updateData['status'] = DocumentStatus::ENCODING;
+            }
+
+            $previousStatus = $document->status;
+            $document->update($updateData);
+
+            if (array_key_exists('routedTo', $validatedData)) {
+                $document->routedToUsers()->sync($validatedData['routedTo']);
+            }
+
             if ($request->hasFile('files')) {
                 $this->storeUploadedFiles($document, $request->file('files'));
             }
@@ -371,8 +490,26 @@ class DocumentController extends Controller
                 "Updated document: {$document->document_title} ({$document->zoning_application_no})"
             );
 
+            if ($isEncoder && $submitForProcessing && $previousStatus !== DocumentStatus::ENCODED) {
+                ActivityLogger::log(
+                    'update',
+                    'documents',
+                    $document->zoning_application_no,
+                    "Updated document status for: {$document->document_title} ({$document->zoning_application_no}) to encoded"
+                );
+            }
+
+            if ($isEncoder && $submitForProcessing && ! empty($validatedData['routedTo'])) {
+                $routedUsers = User::whereIn('id', $validatedData['routedTo'])->get();
+                foreach ($routedUsers as $routedUser) {
+                    SendDocumentRoutedEmail::dispatch($document->fresh(), $routedUser);
+                }
+            }
+
             return response()->json([
-                'message' => 'Document updated successfully.',
+                'message' => $isEncoder && $submitForProcessing
+                    ? 'Application submitted successfully.'
+                    : ($isEncoder ? 'Application draft saved successfully.' : 'Document updated successfully.'),
                 'document' => $document->load(['zoning', 'projectType', 'specificProjectType', 'barangay', 'purok', 'routedToUsers', 'attachments', 'receivedByUser']),
             ]);
 
@@ -383,8 +520,73 @@ class DocumentController extends Controller
         }
     }
 
+    public function submitApplication(Document $document)
+    {
+        /** @var User $user */
+        $user = Auth::user();
+        $user->loadMissing('roles');
+
+        if (! DocumentAuthorization::canSubmitDocument($user, $document)) {
+            return response()->json([
+                'message' => 'You are not allowed to submit this application.',
+            ], 403);
+        }
+
+        if ($document->attachments()->count() === 0) {
+            return response()->json([
+                'message' => 'At least one attachment is required before submission.',
+            ], 422);
+        }
+
+        if ($document->routedToUsers()->count() === 0) {
+            return response()->json([
+                'message' => 'Please assign at least one routing recipient before submission.',
+            ], 422);
+        }
+
+        try {
+            DocumentStatus::transition(
+                $document,
+                DocumentStatus::ENCODED,
+                "Updated document status for: {$document->document_title} ({$document->zoning_application_no}) to encoded"
+            );
+
+            ActivityLogger::log(
+                'update',
+                'documents',
+                $document->zoning_application_no,
+                "Submitted application: {$document->document_title} ({$document->zoning_application_no})"
+            );
+
+            $routedUsers = $document->routedToUsers()->get();
+            foreach ($routedUsers as $routedUser) {
+                SendDocumentRoutedEmail::dispatch($document->fresh(), $routedUser);
+            }
+
+            return response()->json([
+                'message' => 'Application submitted successfully.',
+                'document' => $document->fresh()->load(['attachments', 'routedToUsers', 'receivedByUser']),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to submit application.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
     public function destroy(Document $document)
     {
+        /** @var User $user */
+        $user = Auth::user();
+        $user->loadMissing('roles');
+
+        if (DocumentAuthorization::isEncoder($user)) {
+            return response()->json([
+                'message' => 'You are not allowed to delete applications.',
+            ], 403);
+        }
+
         try {
             $title = $document->document_title;
             $appNo = $document->zoning_application_no;
@@ -589,31 +791,63 @@ class DocumentController extends Controller
         }
     }
 
-    public function updateStatus(Request $request, Document $document)
+    public function returnToEncoder(Document $document)
     {
-        $validatedData = $request->validate([
-            'status' => 'required|in:pending,processing,completed,finalized',
-        ]);
+        /** @var User $user */
+        $user = Auth::user();
+        $user->loadMissing('roles');
+
+        if (! DocumentAuthorization::canReturnToEncoder($user, $document)) {
+            return response()->json([
+                'message' => 'You are not allowed to return this application to the encoder.',
+            ], 403);
+        }
 
         try {
-            $document->update([
-                'status' => $validatedData['status'],
-            ]);
-
-            ActivityLogger::log(
-                'update',
-                'documents',
-                $document->zoning_application_no,
-                "Updated document status for: {$document->document_title} ({$document->zoning_application_no}) to {$validatedData['status']}"
+            DocumentStatus::transition(
+                $document,
+                DocumentStatus::RETURNED,
+                "Updated document status for: {$document->document_title} ({$document->zoning_application_no}) to returned"
             );
 
             return response()->json([
-                'message' => 'Document status updated successfully.',
+                'message' => 'Application returned to encoder.',
                 'document' => $document->fresh(),
             ]);
         } catch (\Exception $e) {
             return response()->json([
-                'message' => 'Failed to update document status.',
+                'message' => 'Failed to return application to encoder.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function approveApplication(Document $document)
+    {
+        /** @var User $user */
+        $user = Auth::user();
+        $user->loadMissing('roles');
+
+        if (! DocumentAuthorization::canApproveApplication($user, $document)) {
+            return response()->json([
+                'message' => 'You are not allowed to approve this application.',
+            ], 403);
+        }
+
+        try {
+            DocumentStatus::transition(
+                $document,
+                DocumentStatus::APPROVED,
+                "Updated document status for: {$document->document_title} ({$document->zoning_application_no}) to approved"
+            );
+
+            return response()->json([
+                'message' => 'Application approved successfully.',
+                'document' => $document->fresh(),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to approve application.',
                 'error' => $e->getMessage(),
             ], 500);
         }
@@ -625,9 +859,9 @@ class DocumentController extends Controller
             'file' => 'required|file|mimes:pdf|max:10240',
         ]);
 
-        if (! in_array($document->status, ['completed', 'finalized'])) {
+        if ($document->status !== DocumentStatus::APPROVED) {
             return response()->json([
-                'message' => 'OIC attachment can only be uploaded for completed or finalized documents.',
+                'message' => 'OIC attachment can only be uploaded for approved documents.',
             ], 403);
         }
 
@@ -662,6 +896,85 @@ class DocumentController extends Controller
                 'error' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    private function fullDocumentRules(Request $request, bool $requireFiles = false, bool $requireRoutedTo = true, bool $requireOic = false): array
+    {
+        $rules = [
+            'documentTitle' => 'required|string',
+            'zoning' => 'required|exists:zonings,id',
+            'zoningApplicationNo' => 'required|string',
+            'typeOfProject' => 'required|exists:project_types,id',
+            'specificProjectType' => $this->specificProjectTypeRule($request),
+            'dueDate' => 'nullable|string',
+            'applicantName' => 'required|string',
+            'corporationName' => 'nullable|string',
+            'corporationAddress' => 'nullable|string',
+            'assistedBy' => 'nullable|string',
+            'oic' => $requireOic ? 'required|string' : 'nullable|string',
+            'barangay' => 'required|exists:barangays,id',
+            'purok' => 'required|exists:puroks,id',
+            'landmark' => 'required|string',
+            'coordinates' => 'nullable|string',
+            'buildings' => 'required|array|min:1',
+            'buildings.*.name' => 'required|string|max:255',
+            'buildings.*.area' => 'required|string|max:255',
+            'lots' => 'required|array|min:1',
+            'lots.*.land_title' => 'required|string|max:255',
+            'lots.*.area' => 'required|string|max:255',
+            'floorArea' => 'nullable|string',
+            'lotArea' => 'nullable|string',
+            'storey' => 'required|string',
+            'mezanine' => 'nullable|string',
+            'routedTo' => $requireRoutedTo ? 'required|array|min:1' : 'nullable|array',
+            'routedTo.*' => 'exists:users,id',
+            ...$this->pdfUploadRules(required: $requireFiles),
+        ];
+
+        return $rules;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function draftDocumentRules(Request $request): array
+    {
+        return [
+            'documentTitle' => 'required|string',
+            'zoning' => 'required|exists:zonings,id',
+            'zoningApplicationNo' => 'required|string',
+            'typeOfProject' => 'required|exists:project_types,id',
+            'specificProjectType' => $this->specificProjectTypeRule($request),
+            'dueDate' => 'nullable|string',
+            'applicantName' => 'required|string',
+            'corporationName' => 'nullable|string',
+            'corporationAddress' => 'nullable|string',
+            'assistedBy' => 'nullable|string',
+            'barangay' => 'required|exists:barangays,id',
+            'purok' => 'required|exists:puroks,id',
+            'landmark' => 'required|string',
+            'coordinates' => 'nullable|string',
+            'buildings' => 'nullable|array',
+            'buildings.*.name' => 'nullable|string|max:255',
+            'buildings.*.area' => 'nullable|string|max:255',
+            'lots' => 'nullable|array',
+            'lots.*.land_title' => 'nullable|string|max:255',
+            'lots.*.area' => 'nullable|string|max:255',
+            'floorArea' => 'nullable|string',
+            'lotArea' => 'nullable|string',
+            'storey' => 'nullable|string',
+            'mezanine' => 'nullable|string',
+            'routedTo' => 'nullable|array',
+            'routedTo.*' => 'exists:users,id',
+            ...$this->pdfUploadRules(required: false),
+        ];
+    }
+
+    private function userCanAccessDocument(User $user, Document $document): bool
+    {
+        return DocumentAuthorization::scopeForUser(Document::query(), $user)
+            ->whereKey($document->id)
+            ->exists();
     }
 
     private function specificProjectTypeRule(Request $request): array

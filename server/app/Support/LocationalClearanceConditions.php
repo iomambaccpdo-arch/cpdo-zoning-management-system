@@ -20,5 +20,5 @@ final class LocationalClearanceConditions
         'The validity of this locational clearance is one (1) year and automatically revoked if the project is not commenced within the date of issuance.',
     ];
 
-    public const DEFAULT_DECISION = 'LC- Granted and Subject to the condition below:';
+    public const DEFAULT_DECISION = 'LC- Granted and subject to the condition below:';
 }

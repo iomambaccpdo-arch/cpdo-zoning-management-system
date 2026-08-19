@@ -13,12 +13,7 @@ return new class extends Migration
             'name' => 'generate_locational_clearance',
         ]);
 
-        $sectionHeadRole = Role::firstOrCreate(
-            ['code' => 750],
-            ['name' => 'Section Head']
-        );
-
-        Role::whereIn('code', [750, 800, 900])->each(function (Role $role) use ($permission) {
+        Role::whereIn('code', [800, 900])->each(function (Role $role) use ($permission) {
             $role->permissions()->syncWithoutDetaching([$permission->id]);
         });
     }
@@ -33,7 +28,7 @@ return new class extends Migration
             return;
         }
 
-        Role::whereIn('code', [750, 800, 900])->each(function (Role $role) use ($permission) {
+        Role::whereIn('code', [800, 900])->each(function (Role $role) use ($permission) {
             $role->permissions()->detach($permission->id);
         });
 

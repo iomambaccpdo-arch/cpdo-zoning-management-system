@@ -28,18 +28,25 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('documents/{document}', [\App\Http\Controllers\DocumentController::class, 'show']);
     Route::get('documents/{document}/attachments', [\App\Http\Controllers\DocumentController::class, 'attachments']);
     Route::post('documents/{document}/attachments', [\App\Http\Controllers\DocumentController::class, 'uploadAttachments']);
-    Route::post('documents', [\App\Http\Controllers\DocumentController::class, 'store']);
-    Route::post('documents/{document}', [\App\Http\Controllers\DocumentController::class, 'update']);
-    Route::delete('documents/{document}', [\App\Http\Controllers\DocumentController::class, 'destroy']);
+    Route::post('documents', [\App\Http\Controllers\DocumentController::class, 'store'])->middleware('permission:files,create');
+    Route::post('documents/{document}', [\App\Http\Controllers\DocumentController::class, 'update'])->middleware('permission:files,update');
+    Route::post('documents/{document}/submit', [\App\Http\Controllers\DocumentController::class, 'submitApplication'])->middleware('permission:files,submit_application');
+    Route::delete('documents/{document}', [\App\Http\Controllers\DocumentController::class, 'destroy'])->middleware('permission:files,delete');
     Route::post('documents/{document}/extend-due-date', [\App\Http\Controllers\DocumentController::class, 'extendDueDate'])->middleware('permission:files,extend_due_date');
-    Route::put('documents/{document}/status', [\App\Http\Controllers\DocumentController::class, 'updateStatus'])->middleware('permission:files,update');
+    Route::post('documents/{document}/return-to-encoder', [\App\Http\Controllers\DocumentController::class, 'returnToEncoder'])->middleware('permission:files,update');
+    Route::post('documents/{document}/approve', [\App\Http\Controllers\DocumentController::class, 'approveApplication'])->middleware('permission:files,approve_application');
     Route::post('documents/{document}/oic-attachment', [\App\Http\Controllers\DocumentController::class, 'uploadOicAttachment'])->middleware('permission:files,update');
     Route::put('documents/{document}/oic', [\App\Http\Controllers\DocumentController::class, 'updateOic'])->middleware('permission:files,update');
 
     // Inspection Reports
-    Route::get('documents/{document}/inspection-report', [\App\Http\Controllers\InspectionReportController::class, 'show'])->middleware('permission:files,inspection_report');
+    Route::get('documents/{document}/inspection-report/photos', [\App\Http\Controllers\InspectionReportController::class, 'photos']);
+    Route::post('documents/{document}/inspection-report/photos', [\App\Http\Controllers\InspectionReportController::class, 'uploadPhotos'])->middleware('permission:files,inspection_report');
+    Route::delete('documents/{document}/inspection-report/photos/{attachment}', [\App\Http\Controllers\InspectionReportController::class, 'destroyPhoto'])->middleware('permission:files,inspection_report');
+    Route::get('documents/{document}/inspection-report', [\App\Http\Controllers\InspectionReportController::class, 'show']);
     Route::post('documents/{document}/inspection-report', [\App\Http\Controllers\InspectionReportController::class, 'store'])->middleware('permission:files,inspection_report');
     Route::put('documents/{document}/inspection-report/{inspectionReport}', [\App\Http\Controllers\InspectionReportController::class, 'update'])->middleware('permission:files,inspection_report');
+    Route::post('documents/{document}/inspection-report/{inspectionReport}/return-for-revision', [\App\Http\Controllers\InspectionReportController::class, 'returnForRevision'])->middleware('permission:files,inspection_report');
+    Route::post('documents/{document}/inspection-report/{inspectionReport}/review', [\App\Http\Controllers\InspectionReportController::class, 'review'])->middleware('permission:files,review_inspection_report');
 
     // Locational Clearance
     Route::get('documents/{document}/locational-clearance', [\App\Http\Controllers\LocationalClearanceController::class, 'show'])->middleware('permission:files,generate_locational_clearance');

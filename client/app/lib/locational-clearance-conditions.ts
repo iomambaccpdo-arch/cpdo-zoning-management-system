@@ -15,7 +15,7 @@ export const LOCATIONAL_CLEARANCE_ADDITIONAL_CONDITIONS = [
 ] as const
 
 export const DEFAULT_LOCATIONAL_CLEARANCE_DECISION =
-    "LC- Granted and Subject to the condition below:"
+    "LC- Granted and subject to the condition below:"
 
 export function formatConditionsList(conditions: readonly string[]): string {
     return conditions.join("\n")

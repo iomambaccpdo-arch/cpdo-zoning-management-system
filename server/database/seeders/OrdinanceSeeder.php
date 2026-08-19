@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Support\ZoningClassification;
 use Illuminate\Database\Seeder;
 
 class OrdinanceSeeder extends Seeder
@@ -21,7 +22,7 @@ class OrdinanceSeeder extends Seeder
         $currentProjectType = null;
 
         foreach ($data as $item) {
-            $zoningName = trim($item['ZONING'] ?? '');
+            $zoningName = ZoningClassification::format(trim($item['ZONING'] ?? ''));
             $projectTypeName = trim($item['Type of Project'] ?? '');
             $specificProjectTypeName = trim($item['Specific Project Type'] ?? '');
 

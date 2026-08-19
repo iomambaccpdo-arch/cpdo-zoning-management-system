@@ -21,7 +21,7 @@ import { PdfPreviewModal } from "~/components/files/pdf-preview-modal"
 import { ExtendDueDateModal } from "~/components/documents/extend-due-date-modal"
 import { InspectionReportModal } from "~/components/documents/inspection-report-modal"
 import { useAuthStore } from "~/store/auth"
-import { canExtendDueDate, canManageInspectionReport } from "~/lib/permissions"
+import { canExtendDueDate, canViewInspectionReport } from "~/lib/permissions"
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 export function getFileExtColor(fileName: string): string {
@@ -60,7 +60,7 @@ export function FileCard({ attachment, onDeleted }: FileCardProps) {
         role.permissions?.some((p: any) => p.resource === "Files" && p.name === "delete")
     )
     const canExtend = canExtendDueDate(user)
-    const canInspectionReport = canManageInspectionReport(user)
+    const canInspectionReport = canViewInspectionReport(user)
 
     const [showDocument, setShowDocument] = React.useState(false)
     const [showPreview, setShowPreview] = React.useState(false)

@@ -6,13 +6,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { DocumentService } from "~/api/DocumentService"
 import { NewDocumentModal } from "~/components/documents/new-document-modal"
 import { useAuthStore } from "~/store/auth"
+import { canCreateFile } from "~/lib/permissions"
 import { FileCard, FileCardSkeleton } from "~/components/files/file-card"
 
 export default function Files() {
     const { user } = useAuthStore()
-    const canCreateFile = user?.roles?.some((role) =>
-        role.permissions?.some((p: any) => p.resource === "Files" && p.name === "create")
-    )
+    const canCreate = canCreateFile(user)
 
     const [search, setSearch] = React.useState("")
     const [debouncedSearch, setDebouncedSearch] = React.useState("")
@@ -63,7 +62,7 @@ export default function Files() {
                             }}
                         />
                     </div>
-                    {canCreateFile && (
+                    {canCreate && (
                         <NewDocumentModal>
                             <Button
                                 size="sm"

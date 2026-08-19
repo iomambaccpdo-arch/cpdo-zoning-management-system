@@ -21,7 +21,7 @@ import {
 import { DocumentService, type DocumentAttachment } from "~/api/DocumentService"
 import { InspectionReportModal } from "~/components/documents/inspection-report-modal"
 import { useAuthStore } from "~/store/auth"
-import { canManageInspectionReport } from "~/lib/permissions"
+import { canViewInspectionReport } from "~/lib/permissions"
 
 interface ViewDocumentTableProps {
     attachment: DocumentAttachment
@@ -31,7 +31,7 @@ interface ViewDocumentTableProps {
 
 export function ViewDocumentTable({ attachment, open, onClose }: ViewDocumentTableProps) {
     const { user } = useAuthStore()
-    const canInspectionReport = canManageInspectionReport(user)
+    const canInspectionReport = canViewInspectionReport(user)
     const [showInspectionReport, setShowInspectionReport] = React.useState(false)
     const doc = attachment.document
 

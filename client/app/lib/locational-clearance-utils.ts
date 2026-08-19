@@ -7,6 +7,10 @@ import {
     LOCATIONAL_CLEARANCE_ADDITIONAL_CONDITIONS,
     LOCATIONAL_CLEARANCE_CONDITIONS,
 } from "~/lib/locational-clearance-conditions"
+import {
+    formatFloorAreaForClearance,
+    formatLotAreaForClearance,
+} from "~/lib/document-property-utils"
 import { buildLocationalClearanceLocation } from "~/lib/inspection-report-utils"
 
 export interface LocationalClearanceData {
@@ -86,6 +90,14 @@ function recommendingOfficer(document: Document): string {
 
     if (!report) return "—"
 
+    if (report.recommended_for_approval_name?.trim()) {
+        const name = report.recommended_for_approval_name.trim()
+        if (report.recommended_for_approval_designation?.trim()) {
+            return `${name}, ${report.recommended_for_approval_designation.trim()}`
+        }
+        return name
+    }
+
     if (report.noted_by_signature?.trim()) {
         const name = report.noted_by_signature.trim()
         if (report.noted_by_designation?.trim()) {
@@ -102,13 +114,36 @@ function recommendingOfficer(document: Document): string {
     return "—"
 }
 
+function approvingOfficer(document: Document): string {
+    const report = document.inspection_report
+
+    if (report?.approved_by_name?.trim()) {
+        const name = report.approved_by_name.trim()
+        if (report.approved_by_designation?.trim()) {
+            return `${name}, ${report.approved_by_designation.trim()}`
+        }
+        return name
+    }
+
+    return document.oic?.trim() || "—"
+}
+
+function additionalConditionsText(document: Document): string {
+    const fromReport = document.inspection_report?.additional_conditions?.trim()
+    if (fromReport) {
+        return fromReport
+    }
+
+    return formatConditionsList(LOCATIONAL_CLEARANCE_ADDITIONAL_CONDITIONS)
+}
+
 export function buildLocationalClearanceData(document: Document): LocationalClearanceData {
     const report = document.inspection_report
     const projectTypeParts = [document.project_type?.name, document.specific_project_type?.name].filter(Boolean)
     const dateApproved = report?.submitted_at ?? document.created_at
 
     const latestAttachment = document.attachments
-        ?.filter((a) => a.attachment_type !== "oic")
+        ?.filter((a) => a.attachment_type === "document" || !a.attachment_type)
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
 
     return {
@@ -118,13 +153,17 @@ export function buildLocationalClearanceData(document: Document): LocationalClea
         dateApproved: formatDate(dateApproved),
         dateRequirementsComplied: formatDate(latestAttachment?.created_at ?? document.date_of_application),
         applicantName: document.applicant_name,
-        corporationName: "",
+        corporationName: document.corporation_name?.trim() || "",
         applicantAddress: formatAddress(document),
-        corporationAddress: "",
+        corporationAddress: document.corporation_address?.trim() || "",
         projectType: projectTypeParts.join(" — ") || "—",
-        location: buildLocationalClearanceLocation(document, report?.location_details),
-        floorArea: document.floor_area ? `${document.floor_area} SQUARE METERS` : "—",
-        lotArea: document.lot_area ? `${document.lot_area} SQUARE METERS` : "—",
+        location: buildLocationalClearanceLocation(
+            document,
+            report?.location_details,
+            report?.landmark,
+        ),
+        floorArea: formatFloorAreaForClearance(document),
+        lotArea: formatLotAreaForClearance(document),
         frontageAtMainRoad: report?.front_setback?.trim() || "—",
         typeOfLot: report?.type_of_lot?.trim() || "—",
         standardRoadRightOfWay: report?.road_standard_rrow?.trim() || "—",
@@ -132,9 +171,9 @@ export function buildLocationalClearanceData(document: Document): LocationalClea
         rightOverLand: report?.right_over_land?.trim() || "—",
         decision: DEFAULT_LOCATIONAL_CLEARANCE_DECISION,
         conditions: formatConditionsList(LOCATIONAL_CLEARANCE_CONDITIONS),
-        additionalConditions: formatConditionsList(LOCATIONAL_CLEARANCE_ADDITIONAL_CONDITIONS),
+        additionalConditions: additionalConditionsText(document),
         recommendingApprovalOfficer: recommendingOfficer(document),
-        approvingOfficer: document.oic?.trim() || "—",
+        approvingOfficer: approvingOfficer(document),
         orNumber: "—",
         amountPaid: "—",
         datePaid: "—",
@@ -149,8 +188,8 @@ export function checkLocationalClearanceEligibility(
 ): LocationalClearanceEligibility {
     const reasons: string[] = []
 
-    if (document.status !== "completed") {
-        reasons.push("Document status must be Completed.")
+    if (document.status !== "approved") {
+        reasons.push("Document status must be Approved.")
     }
 
     if (!document.inspection_report || document.inspection_report.status !== "submitted") {

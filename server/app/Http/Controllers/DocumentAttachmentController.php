@@ -2,9 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Document;
 use App\Models\DocumentAttachment;
+use App\Models\User;
 use App\Support\ActivityLogger;
+use App\Support\DocumentAuthorization;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 
 class DocumentAttachmentController extends Controller
@@ -15,6 +19,10 @@ class DocumentAttachmentController extends Controller
      */
     public function index(Request $request)
     {
+        /** @var User $user */
+        $user = Auth::user();
+        $user->loadMissing('roles');
+
         $perPage = $request->query('per_page', 16);
         $search = $request->query('search', '');
 
@@ -26,7 +34,14 @@ class DocumentAttachmentController extends Controller
             'document.barangay:id,name',
             'document.purok:id,name',
             'document.routedToUsers:id,first_name,last_name',
-        ])->latest();
+        ])
+            ->whereNotIn('attachment_type', ['inspection_photo', 'reviewed_inspection_report'])
+            ->latest();
+
+        if (DocumentAuthorization::isEncoder($user)) {
+            $documentIds = DocumentAuthorization::scopeForUser(Document::query(), $user)->pluck('id');
+            $query->whereIn('document_id', $documentIds);
+        }
 
         if ($search) {
             $query->where(function ($q) use ($search) {
@@ -91,6 +106,22 @@ class DocumentAttachmentController extends Controller
      */
     public function destroy(DocumentAttachment $attachment)
     {
+        /** @var User $user */
+        $user = Auth::user();
+        $user->loadMissing('roles');
+
+        if (DocumentAuthorization::isEncoder($user)) {
+            return response()->json([
+                'message' => 'You are not allowed to delete attachments.',
+            ], 403);
+        }
+
+        if ($attachment->isInspectionPhoto()) {
+            return response()->json([
+                'message' => 'Inspection photos must be managed from the inspection report.',
+            ], 403);
+        }
+
         try {
             $fileName = $attachment->file_name;
             Storage::disk('local')->delete($attachment->file_path);

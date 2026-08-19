@@ -16,6 +16,8 @@ class Document extends Model
         'date_of_application',
         'due_date',
         'applicant_name',
+        'corporation_name',
+        'corporation_address',
         'received_by',
         'received_by_user_id',
         'assisted_by',
@@ -24,12 +26,25 @@ class Document extends Model
         'purok_id',
         'landmark',
         'coordinates',
+        'buildings',
+        'lots',
         'floor_area',
         'lot_area',
         'storey',
         'mezanine',
         'status',
     ];
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'buildings' => 'array',
+            'lots' => 'array',
+        ];
+    }
 
     public function zoning()
     {

@@ -8,13 +8,6 @@ import { DocumentService } from "~/api/DocumentService"
 import { Button } from "~/components/ui/button"
 import { Checkbox } from "~/components/ui/checkbox"
 import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "~/components/ui/select"
-import {
     Dialog,
     DialogContent,
     DialogDescription,
@@ -41,11 +34,20 @@ import {
     TableRow,
 } from "~/components/ui/table"
 import { useAuthStore } from "~/store/auth"
-import { canExtendDueDate, canManageInspectionReport } from "~/lib/permissions"
+import {
+    canApproveApplication,
+    canEditDocument,
+    canExtendDueDate,
+    canReturnToEncoder,
+    canReviewInspectionReport,
+    canViewInspectionReport,
+    isEncoderClerk,
+} from "~/lib/permissions"
 import { ExtendDueDateModal } from "~/components/documents/extend-due-date-modal"
 import { DueDateExtensionHistory } from "~/components/documents/due-date-extension-history"
 import { InspectionReportModal } from "~/components/documents/inspection-report-modal"
 import { GenerateLocationalClearanceButton } from "~/components/documents/generate-locational-clearance-button"
+import { DocumentStatusBadge } from "~/components/documents/document-status-badge"
 
 interface ManageAttachmentsModalProps {
     documentId: number | null
@@ -55,11 +57,15 @@ interface ManageAttachmentsModalProps {
 
 export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAttachmentsModalProps) {
     const { user } = useAuthStore()
-    const canReplaceAttachments = user?.roles?.some(
+    const isEncoder = isEncoderClerk(user)
+    const canReplaceAttachments = !isEncoder && (user?.roles?.some(
         (role) => role.name === "Coordinator" || role.name === "Super Admin"
-    ) ?? false
+    ) ?? false)
     const canExtend = canExtendDueDate(user)
-    const canInspectionReport = canManageInspectionReport(user)
+    const canInspectionReport = canViewInspectionReport(user)
+    const canApprove = canApproveApplication(user)
+    const canReturnEncoder = canReturnToEncoder(user)
+    const canReview = canReviewInspectionReport(user)
 
     const queryClient = useQueryClient()
     const fileInputRef = React.useRef<HTMLInputElement>(null)
@@ -70,6 +76,7 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
     const [selectedOicUserId, setSelectedOicUserId] = React.useState<string>("")
     const [showExtendDueDate, setShowExtendDueDate] = React.useState(false)
     const [showInspectionReport, setShowInspectionReport] = React.useState(false)
+    const [uploadProgress, setUploadProgress] = React.useState(0)
 
     const { data: document } = useQuery({
         queryKey: ["document", documentId],
@@ -98,12 +105,17 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
     }
 
     const uploadMutation = useMutation({
-        mutationFn: (files: File[]) => DocumentService.uploadDocumentAttachments(documentId!, files),
+        mutationFn: (files: File[]) => {
+            setUploadProgress(0)
+            return DocumentService.uploadDocumentAttachments(documentId!, files, setUploadProgress)
+        },
         onSuccess: () => {
             toast.success("Attachments uploaded successfully")
+            setUploadProgress(0)
             invalidateAll()
         },
         onError: (error: any) => {
+            setUploadProgress(0)
             toast.error(error?.response?.data?.message || "Failed to upload attachments")
         },
     })
@@ -122,17 +134,22 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
 
     const replaceMutation = useMutation({
         mutationFn: async (files: File[]) => {
-            for (const attachmentId of selectedAttachmentIds) {
-                await DocumentService.deleteAttachment(attachmentId)
-            }
-            await DocumentService.uploadDocumentAttachments(documentId!, files)
+            setUploadProgress(0)
+            await Promise.all(
+                selectedAttachmentIds.map((attachmentId) =>
+                    DocumentService.deleteAttachment(attachmentId),
+                ),
+            )
+            await DocumentService.uploadDocumentAttachments(documentId!, files, setUploadProgress)
         },
         onSuccess: () => {
             toast.success("Attachments replaced successfully")
             setSelectedAttachmentIds([])
+            setUploadProgress(0)
             invalidateAll()
         },
         onError: (error: any) => {
+            setUploadProgress(0)
             toast.error(error?.response?.data?.message || "Failed to replace attachments")
         },
     })
@@ -149,14 +166,25 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
         },
     })
 
-    const updateStatusMutation = useMutation({
-        mutationFn: (status: string) => DocumentService.updateStatus(documentId!, status),
+    const returnToEncoderMutation = useMutation({
+        mutationFn: () => DocumentService.returnToEncoder(documentId!),
         onSuccess: () => {
-            toast.success("Document status updated successfully")
+            toast.success("Application returned to encoder")
             invalidateAll()
         },
         onError: (error: any) => {
-            toast.error(error?.response?.data?.message || "Failed to update document status")
+            toast.error(error?.response?.data?.message || "Failed to return application")
+        },
+    })
+
+    const approveMutation = useMutation({
+        mutationFn: () => DocumentService.approveApplication(documentId!),
+        onSuccess: () => {
+            toast.success("Application approved successfully")
+            invalidateAll()
+        },
+        onError: (error: any) => {
+            toast.error(error?.response?.data?.message || "Failed to approve application")
         },
     })
 
@@ -192,9 +220,26 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
         )
     }
 
-    const isMutating = uploadMutation.isPending || replaceMutation.isPending || deleteMutation.isPending || updateOicMutation.isPending || updateStatusMutation.isPending
+    const isMutating = uploadMutation.isPending || replaceMutation.isPending || deleteMutation.isPending || updateOicMutation.isPending || returnToEncoderMutation.isPending || approveMutation.isPending
+    const isUploading = uploadMutation.isPending || replaceMutation.isPending
+    const uploadButtonLabel = isUploading
+        ? uploadProgress > 0 && uploadProgress < 100
+            ? `Uploading... ${uploadProgress}%`
+            : "Uploading..."
+        : "Upload Additional PDFs"
+    const replaceButtonLabel = isUploading
+        ? uploadProgress > 0 && uploadProgress < 100
+            ? `Replacing... ${uploadProgress}%`
+            : "Replacing..."
+        : "Replace Selected"
 
-    const documentAttachments = attachments?.filter((a) => a.attachment_type !== "oic") ?? []
+    const documentAttachments = attachments?.filter(
+        (a) =>
+            a.attachment_type !== "oic" &&
+            a.attachment_type !== "inspection_photo" &&
+            a.attachment_type !== "reviewed_inspection_report"
+    ) ?? []
+    const canUploadAttachments = canEditDocument(user, document?.status)
 
     return (
         <>
@@ -238,12 +283,12 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
                             size="sm"
                             className="bg-green-600 hover:bg-green-700 text-white"
                             onClick={() => fileInputRef.current?.click()}
-                            disabled={isMutating}
+                            disabled={isMutating || !canUploadAttachments}
                         >
                             <Plus className="h-4 w-4 mr-1" />
-                            Upload Additional PDFs
+                            {uploadButtonLabel}
                         </Button>
-                        {document && (document.status === 'completed' || document.status === 'finalized') && (
+                        {document && !isEncoder && document.status === 'approved' && (
                             <div className="flex items-center gap-2 flex-wrap">
                                 <select
                                     className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
@@ -292,7 +337,7 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
                                     disabled={isMutating || selectedAttachmentIds.length === 0}
                                 >
                                     <Upload className="h-4 w-4 mr-1" />
-                                    Replace Selected
+                                    {replaceButtonLabel}
                                 </Button>
                                 <span className="text-xs text-muted-foreground">
                                     Selected for replace: {selectedAttachmentIds.length}
@@ -300,6 +345,20 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
                             </>
                         )}
                     </div>
+
+                    {isUploading && (
+                        <div className="space-y-1 pb-2">
+                            <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-200">
+                                <div
+                                    className="h-full rounded-full bg-green-600 transition-[width] duration-200"
+                                    style={{ width: `${Math.max(uploadProgress, 4)}%` }}
+                                />
+                            </div>
+                            <p className="text-[11px] text-muted-foreground">
+                                Uploading files in parallel for faster transfer...
+                            </p>
+                        </div>
+                    )}
 
                     <div className="flex items-center gap-2 flex-wrap py-2 border-t">
                         <span className="text-sm font-medium">Due Date:</span>
@@ -358,33 +417,50 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
                         </div>
                     )}
 
-                    {document && document.status === "completed" && (
+                    {document && !isEncoder && document.status === "approved" && (
                         <div className="flex items-center gap-2 flex-wrap py-2 border-t">
                             <span className="text-sm font-medium">Locational Clearance:</span>
                             <GenerateLocationalClearanceButton document={document} />
                         </div>
                     )}
 
-                    <div className="flex items-center gap-2 flex-wrap py-2 border-t">
-                        <span className="text-sm font-medium">Document Status:</span>
-                        {document && (
-                            <Select
-                                value={document.status || 'pending'}
-                                onValueChange={(value) => updateStatusMutation.mutate(value)}
-                                disabled={isMutating}
-                            >
-                                <SelectTrigger className="w-[180px]">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="pending">Pending</SelectItem>
-                                    <SelectItem value="processing">Processing</SelectItem>
-                                    <SelectItem value="completed">Completed</SelectItem>
-                                    <SelectItem value="finalized">Finalized</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        )}
-                    </div>
+                    {document && (
+                        <div className="flex items-center gap-2 flex-wrap py-2 border-t">
+                            <span className="text-sm font-medium">Document Status:</span>
+                            <DocumentStatusBadge status={document.status} />
+                            {canReturnEncoder && ["encoding", "encoded", "inspected", "reviewed"].includes(document.status ?? "") && (
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-amber-300 text-amber-800 hover:bg-amber-50"
+                                    disabled={isMutating}
+                                    onClick={() => returnToEncoderMutation.mutate()}
+                                >
+                                    Return to Encoder
+                                </Button>
+                            )}
+                            {canApprove && document.status === "reviewed" && (
+                                <Button
+                                    size="sm"
+                                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                                    disabled={isMutating}
+                                    onClick={() => approveMutation.mutate()}
+                                >
+                                    Approve Application
+                                </Button>
+                            )}
+                            {canReview && document.status === "inspected" && canInspectionReport && (
+                                <Button
+                                    size="sm"
+                                    className="bg-teal-600 hover:bg-teal-700 text-white"
+                                    disabled={isMutating}
+                                    onClick={() => setShowInspectionReport(true)}
+                                >
+                                    Review Inspection Report
+                                </Button>
+                            )}
+                        </div>
+                    )}
 
                     <div className="border rounded-md overflow-auto flex-1">
                         <Table>
@@ -464,6 +540,7 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
                                                 className="h-7 w-7 p-0 text-red-600"
                                                 title="Delete"
                                                 onClick={() => setPendingDeleteId(attachment.id)}
+                                                disabled={isEncoder}
                                             >
                                                 <Trash2 className="h-4 w-4" />
                                             </Button>

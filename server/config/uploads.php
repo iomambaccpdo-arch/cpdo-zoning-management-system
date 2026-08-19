@@ -16,4 +16,6 @@ return [
 
     'max_files_per_request' => (int) env('UPLOAD_MAX_FILES_PER_REQUEST', 20),
 
+    'max_image_size_kb' => (int) env('UPLOAD_MAX_IMAGE_MB', 10) * 1024,
+
 ];

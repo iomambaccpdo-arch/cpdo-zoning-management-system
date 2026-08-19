@@ -14,8 +14,8 @@ class LocationalClearanceBuilder
     {
         $reasons = [];
 
-        if ($document->status !== 'completed') {
-            $reasons[] = 'Document status must be Completed.';
+        if ($document->status !== 'approved') {
+            $reasons[] = 'Document status must be Approved.';
         }
 
         $report = $document->inspectionReport;
@@ -54,13 +54,13 @@ class LocationalClearanceBuilder
             'dateApproved' => $this->formatDate($dateApproved),
             'dateRequirementsComplied' => $this->formatDate($this->requirementsCompliedDate($document)),
             'applicantName' => $document->applicant_name,
-            'corporationName' => '',
+            'corporationName' => filled($document->corporation_name) ? $document->corporation_name : '',
             'applicantAddress' => $this->formatAddress($document),
-            'corporationAddress' => '',
+            'corporationAddress' => filled($document->corporation_address) ? $document->corporation_address : '',
             'projectType' => implode(' — ', $projectTypeParts) ?: '—',
             'location' => $this->buildLocation($document, $report),
-            'floorArea' => $document->floor_area ? $document->floor_area.' SQUARE METERS' : '—',
-            'lotArea' => $document->lot_area ? $document->lot_area.' SQUARE METERS' : '—',
+            'floorArea' => DocumentPropertyDetails::formatFloorAreaForClearance($document),
+            'lotArea' => DocumentPropertyDetails::formatLotAreaForClearance($document),
             'frontageAtMainRoad' => $report?->front_setback ?: '—',
             'typeOfLot' => $report?->type_of_lot ?: '—',
             'standardRoadRightOfWay' => $report?->road_standard_rrow ?: '—',
@@ -68,9 +68,9 @@ class LocationalClearanceBuilder
             'rightOverLand' => $report?->right_over_land ?: '—',
             'decision' => LocationalClearanceConditions::DEFAULT_DECISION,
             'conditions' => implode("\n", LocationalClearanceConditions::CONDITIONS),
-            'additionalConditions' => implode("\n", LocationalClearanceConditions::ADDITIONAL_CONDITIONS),
+            'additionalConditions' => $this->additionalConditions($report),
             'recommendingApprovalOfficer' => $this->recommendingOfficer($report),
-            'approvingOfficer' => $document->oic ?: '—',
+            'approvingOfficer' => $this->approvingOfficer($document, $report),
             'orNumber' => '—',
             'amountPaid' => '—',
             'datePaid' => '—',
@@ -101,6 +101,14 @@ class LocationalClearanceBuilder
             ? trim((string) $report->location_details)
             : $this->defaultLocation($document);
 
+        $landmark = filled($report?->landmark)
+            ? trim((string) $report->landmark)
+            : '';
+
+        if ($landmark !== '') {
+            $location = "{$location} — {$landmark}";
+        }
+
         $coordinates = trim((string) $document->coordinates);
 
         if ($coordinates !== '') {
@@ -115,7 +123,6 @@ class LocationalClearanceBuilder
         $parts = array_filter([
             $document->purok?->name ? 'Prk. '.$document->purok->name : null,
             $document->barangay?->name ? 'Brgy. '.$document->barangay->name : null,
-            $document->landmark,
             'Panabo City',
         ]);
 
@@ -134,19 +141,33 @@ class LocationalClearanceBuilder
         return implode(', ', $parts) ?: '—';
     }
 
+    private function additionalConditions(?object $report): string
+    {
+        if ($report && filled(trim((string) $report->additional_conditions))) {
+            return trim((string) $report->additional_conditions);
+        }
+
+        return implode("\n", LocationalClearanceConditions::ADDITIONAL_CONDITIONS);
+    }
+
     private function recommendingOfficer(?object $report): string
     {
         if (! $report) {
             return '—';
         }
 
-        if (filled($report->noted_by_signature)) {
-            $name = $report->noted_by_signature;
-            if (filled($report->noted_by_designation)) {
-                return "{$name}, {$report->noted_by_designation}";
-            }
+        if (filled($report->recommended_for_approval_name)) {
+            return $this->formatOfficerName(
+                $report->recommended_for_approval_name,
+                $report->recommended_for_approval_designation
+            );
+        }
 
-            return $name;
+        if (filled($report->noted_by_signature)) {
+            return $this->formatOfficerName(
+                $report->noted_by_signature,
+                $report->noted_by_designation
+            );
         }
 
         if (filled($report->inspector_signature)) {
@@ -162,10 +183,33 @@ class LocationalClearanceBuilder
         return '—';
     }
 
+    private function approvingOfficer(Document $document, ?object $report): string
+    {
+        if ($report && filled($report->approved_by_name)) {
+            return $this->formatOfficerName(
+                $report->approved_by_name,
+                $report->approved_by_designation
+            );
+        }
+
+        return filled(trim((string) $document->oic)) ? trim((string) $document->oic) : '—';
+    }
+
+    private function formatOfficerName(string $name, mixed $designation): string
+    {
+        $name = trim($name);
+
+        if (filled($designation)) {
+            return "{$name}, ".trim((string) $designation);
+        }
+
+        return $name;
+    }
+
     private function requirementsCompliedDate(Document $document): mixed
     {
         $latestDocumentAttachment = $document->attachments
-            ->where('attachment_type', '!=', 'oic')
+            ->where('attachment_type', 'document')
             ->sortByDesc('created_at')
             ->first();
 

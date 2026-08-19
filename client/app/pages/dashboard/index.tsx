@@ -1,6 +1,7 @@
 import * as React from "react"
 import { format } from "date-fns"
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { toast } from "sonner"
 import { FileText, X, ChevronLeft, ChevronRight, Loader2, Download, Eye, Pencil, FolderOpen, Trash2, Search, AlertTriangle, ClipboardCheck } from "lucide-react"
 import { Input } from "~/components/ui/input"
 import { DocumentService } from "~/api/DocumentService"
@@ -22,51 +23,36 @@ import { ManageAttachmentsModal } from "~/components/documents/manage-attachment
 import { DeleteDocumentConfirm } from "~/components/documents/delete-document-confirm"
 import { InspectionReportModal } from "~/components/documents/inspection-report-modal"
 import { useAuthStore } from "~/store/auth"
-import { canManageInspectionReport, canGenerateLocationalClearance } from "~/lib/permissions"
+import type { User } from "~/store/auth"
+import {
+    canDeleteFile,
+    canEditDocument as canEditDocumentForStatus,
+    canGenerateLocationalClearance,
+    canSubmitApplication as canSubmitApplicationPermission,
+    canViewInspectionReport,
+    isEncoderClerk,
+} from "~/lib/permissions"
 import { GenerateLocationalClearanceButton } from "~/components/documents/generate-locational-clearance-button"
+import { DocumentStatusBadge } from "~/components/documents/document-status-badge"
 
 // ─── Year helpers ───────────────────────────────────────────────────────────
 const CURRENT_YEAR = new Date().getFullYear()
 const CURRENT_MONTH = new Date().getMonth() + 1 // 1-indexed
 const YEAR_OPTIONS = Array.from({ length: 6 }, (_, i) => CURRENT_YEAR - i)
 
-type DashboardTab = "overview" | "overdue"
-
-const STATUS_LABELS: Record<string, string> = {
-    pending: "Pending",
-    processing: "Processing",
-    completed: "Completed",
-    finalized: "Finalized",
-}
-
-function statusBadgeClass(status?: string) {
-    switch (status) {
-        case "pending":
-            return "bg-amber-100 text-amber-800 border-amber-200"
-        case "processing":
-            return "bg-blue-100 text-blue-800 border-blue-200"
-        case "completed":
-            return "bg-emerald-100 text-emerald-800 border-emerald-200"
-        case "finalized":
-            return "bg-zinc-100 text-zinc-700 border-zinc-200"
-        default:
-            return "bg-zinc-100 text-zinc-700 border-zinc-200"
-    }
-}
+type DashboardTab = "overview" | "overdue" | "drafts" | "returned"
 
 type DocumentsTableProps = {
+    user: User | null
     year: number
     month?: number
     monthName?: string
     search: string
+    status?: string
     headerTitle: string
     headerSubtitle?: string
     onClose?: () => void
-    canViewFiles: boolean
-    canEditDocument: boolean
-    canDeleteDocument: boolean
-    canInspectionReport: boolean
-    canGenerateLc: boolean
+    onSubmitApplication: (documentId: number) => void
     onEditDocument: (documentId: number) => void
     onManageAttachments: (documentId: number) => void
     onInspectionReport: (documentId: number) => void
@@ -75,36 +61,42 @@ type DocumentsTableProps = {
 
 // ─── Documents table (month view or search results) ───────────────────────────
 function DocumentsTable({
+    user,
     year,
     month,
     monthName,
     search,
+    status,
     headerTitle,
     headerSubtitle,
     onClose,
-    canViewFiles,
-    canEditDocument,
-    canDeleteDocument,
-    canInspectionReport,
-    canGenerateLc,
+    onSubmitApplication,
     onEditDocument,
     onManageAttachments,
     onInspectionReport,
     onDeleteDocument,
 }: DocumentsTableProps) {
     const [page, setPage] = React.useState(1)
+    const canViewFiles = user?.roles?.some((role) =>
+        role.permissions?.some((p) => p.resource === "Files" && p.name === "view")
+    ) ?? false
+    const canDeleteDocument = canDeleteFile(user)
+    const canInspectionReport = canViewInspectionReport(user)
+    const canGenerateLc = canGenerateLocationalClearance(user)
+    const canSubmitApplication = canSubmitApplicationPermission(user)
 
     React.useEffect(() => {
         setPage(1)
-    }, [search, year, month])
+    }, [search, year, month, status])
 
     const { data, isLoading } = useQuery({
-        queryKey: ["documents", year, month, search, page],
+        queryKey: ["documents", year, month, search, status, page],
         queryFn: () =>
             DocumentService.getDocuments({
                 year: year > 0 ? year : undefined,
                 month,
                 search: search || undefined,
+                status,
                 page,
                 per_page: 10,
             }),
@@ -152,6 +144,7 @@ function DocumentsTable({
                         <TableHead className="text-[12px] font-semibold">App No.</TableHead>
                         <TableHead className="text-[12px] font-semibold">Type</TableHead>
                         <TableHead className="text-[12px] font-semibold">Applicant</TableHead>
+                        <TableHead className="text-[12px] font-semibold">Status</TableHead>
                         <TableHead className="text-[12px] font-semibold">Received by</TableHead>
                         <TableHead className="text-[12px] font-semibold">Location</TableHead>
                         <TableHead className="text-[12px] font-semibold text-right">Actions</TableHead>
@@ -161,7 +154,7 @@ function DocumentsTable({
                     {isLoading &&
                         Array.from({ length: 4 }).map((_, i) => (
                             <TableRow key={i}>
-                                {Array.from({ length: 8 }).map((_, j) => (
+                                {Array.from({ length: 9 }).map((_, j) => (
                                     <TableCell key={j}>
                                         <Skeleton className="h-4 w-full" />
                                     </TableCell>
@@ -170,7 +163,7 @@ function DocumentsTable({
                         ))}
                     {!isLoading && docs.length === 0 && (
                         <TableRow>
-                            <TableCell colSpan={8} className="text-center py-10 text-muted-foreground">
+                            <TableCell colSpan={9} className="text-center py-10 text-muted-foreground">
                                 <FileText className="h-7 w-7 mx-auto mb-2 opacity-30" />
                                 <p className="text-[13px]">
                                     {search
@@ -202,6 +195,9 @@ function DocumentsTable({
                                 <TableCell className="max-w-[150px] truncate">
                                     {doc.applicant_name}
                                 </TableCell>
+                                <TableCell>
+                                    <DocumentStatusBadge status={doc.status} />
+                                </TableCell>
                                 <TableCell className="max-w-[130px] truncate">
                                     {doc.received_by ?? "—"}
                                 </TableCell>
@@ -211,7 +207,7 @@ function DocumentsTable({
                                         : "—"}
                                 </TableCell>
                                 <TableCell className="text-right whitespace-nowrap">
-                                    {canEditDocument && (
+                                    {canEditDocumentForStatus(user, doc.status) && (
                                         <Button
                                             size="sm"
                                             variant="ghost"
@@ -220,6 +216,17 @@ function DocumentsTable({
                                             title="Edit Document"
                                         >
                                             <Pencil className="h-4 w-4" />
+                                        </Button>
+                                    )}
+                                    {canSubmitApplication && (doc.status === "encoding" || doc.status === "returned") && (
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="h-7 w-7 p-0 text-green-700 hover:bg-green-50"
+                                            onClick={() => onSubmitApplication(doc.id)}
+                                            title="Submit for Processing"
+                                        >
+                                            <ClipboardCheck className="h-4 w-4" />
                                         </Button>
                                     )}
                                     {canViewFiles && (
@@ -263,7 +270,7 @@ function DocumentsTable({
                                             <ClipboardCheck className="h-4 w-4" />
                                         </Button>
                                     )}
-                                    {canGenerateLc && doc.status === "completed" && (
+                                    {canGenerateLc && doc.status === "approved" && (
                                         <GenerateLocationalClearanceButton
                                             document={doc}
                                             iconOnly
@@ -320,10 +327,7 @@ function DocumentsTable({
 }
 
 type OverdueApplicationsTableProps = {
-    canViewFiles: boolean
-    canEditDocument: boolean
-    canDeleteDocument: boolean
-    canInspectionReport: boolean
+    user: User | null
     onEditDocument: (documentId: number) => void
     onManageAttachments: (documentId: number) => void
     onInspectionReport: (documentId: number) => void
@@ -331,16 +335,18 @@ type OverdueApplicationsTableProps = {
 }
 
 function OverdueApplicationsTable({
-    canViewFiles,
-    canEditDocument,
-    canDeleteDocument,
-    canInspectionReport,
+    user,
     onEditDocument,
     onManageAttachments,
     onInspectionReport,
     onDeleteDocument,
 }: OverdueApplicationsTableProps) {
     const [page, setPage] = React.useState(1)
+    const canViewFiles = user?.roles?.some((role) =>
+        role.permissions?.some((p) => p.resource === "Files" && p.name === "view")
+    ) ?? false
+    const canDeleteDocument = canDeleteFile(user)
+    const canInspectionReport = canViewInspectionReport(user)
 
     const { data, isLoading } = useQuery({
         queryKey: ["documents", "overdue", page],
@@ -442,15 +448,10 @@ function OverdueApplicationsTable({
                                         </Badge>
                                     </TableCell>
                                     <TableCell>
-                                        <Badge
-                                            variant="outline"
-                                            className={`text-[11px] capitalize ${statusBadgeClass(doc.status)}`}
-                                        >
-                                            {STATUS_LABELS[doc.status ?? "pending"] ?? doc.status}
-                                        </Badge>
+                                        <DocumentStatusBadge status={doc.status} />
                                     </TableCell>
                                     <TableCell className="text-right whitespace-nowrap">
-                                        {canEditDocument && (
+                                        {canEditDocumentForStatus(user, doc.status) && (
                                             <Button
                                                 size="sm"
                                                 variant="ghost"
@@ -533,6 +534,7 @@ function OverdueApplicationsTable({
 // ─── Main Dashboard ──────────────────────────────────────────────────────────
 export default function Dashboard() {
     const { user } = useAuthStore()
+    const queryClient = useQueryClient()
     const [activeTab, setActiveTab] = React.useState<DashboardTab>("overview")
     const [selectedYear, setSelectedYear] = React.useState(CURRENT_YEAR)
     const [selectedMonth, setSelectedMonth] = React.useState<DashboardMonthCount | null>(null)
@@ -558,18 +560,28 @@ export default function Dashboard() {
     const monthlyCounts = data?.monthly_counts ?? []
     const recentAttachments = data?.recent_attachments ?? []
     const overdueCount = data?.overdue_count ?? 0
-
+    const encodingCount = data?.encoding_count ?? 0
+    const returnedCount = data?.returned_count ?? 0
+    const isEncoder = isEncoderClerk(user)
     const canViewFiles = user?.roles?.some((role) =>
-        role.permissions?.some((p: any) => p.resource === "Files" && p.name === "view")
+        role.permissions?.some((p) => p.resource === "Files" && p.name === "view")
     ) ?? false
-    const canEditDocument = user?.roles?.some((role) =>
-        role.permissions?.some((p: any) => p.resource === "Files" && p.name === "edit")
-    ) ?? false
-    const canDeleteDocument = user?.roles?.some((role) =>
-        role.permissions?.some((p: any) => p.resource === "Files" && p.name === "delete")
-    ) ?? false
-    const canInspectionReport = canManageInspectionReport(user)
-    const canGenerateLc = canGenerateLocationalClearance(user)
+
+    const submitApplicationMutation = useMutation({
+        mutationFn: (documentId: number) => DocumentService.submitApplication(documentId),
+        onSuccess: () => {
+            toast.success("Application submitted successfully")
+            queryClient.invalidateQueries({ queryKey: ["documents"] })
+            queryClient.invalidateQueries({ queryKey: ["dashboard"] })
+        },
+        onError: (error: any) => {
+            toast.error(error?.response?.data?.message || "Failed to submit application")
+        },
+    })
+
+    const handleSubmitApplication = (documentId: number) => {
+        submitApplicationMutation.mutate(documentId)
+    }
 
     // Pre-select current month once data loads
     React.useEffect(() => {
@@ -610,6 +622,43 @@ export default function Dashboard() {
                     >
                         Overview
                     </button>
+                    {isEncoder && (
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab("drafts")}
+                            className={`flex items-center gap-2 px-4 py-2 text-[13px] font-medium border-b-2 -mb-px transition-colors ${
+                                activeTab === "drafts"
+                                    ? "border-violet-600 text-violet-700"
+                                    : "border-transparent text-zinc-500 hover:text-zinc-700"
+                            }`}
+                        >
+                            Drafts
+                            {encodingCount > 0 && (
+                                <Badge className="h-5 min-w-5 px-1.5 text-[10px] font-bold bg-violet-600">
+                                    {encodingCount}
+                                </Badge>
+                            )}
+                        </button>
+                    )}
+                    {isEncoder && (
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab("returned")}
+                            className={`flex items-center gap-2 px-4 py-2 text-[13px] font-medium border-b-2 -mb-px transition-colors ${
+                                activeTab === "returned"
+                                    ? "border-orange-600 text-orange-700"
+                                    : "border-transparent text-zinc-500 hover:text-zinc-700"
+                            }`}
+                        >
+                            Returned
+                            {returnedCount > 0 && (
+                                <Badge className="h-5 min-w-5 px-1.5 text-[10px] font-bold bg-orange-600">
+                                    {returnedCount}
+                                </Badge>
+                            )}
+                        </button>
+                    )}
+                    {!isEncoder && (
                     <button
                         type="button"
                         onClick={() => setActiveTab("overdue")}
@@ -629,14 +678,46 @@ export default function Dashboard() {
                             </Badge>
                         )}
                     </button>
+                    )}
                 </div>
 
-                {activeTab === "overdue" ? (
+                {activeTab === "drafts" ? (
+                    <DocumentsTable
+                        user={user}
+                        year={0}
+                        search=""
+                        status="encoding"
+                        headerTitle="Draft Applications"
+                        headerSubtitle="Applications awaiting submission"
+                        onSubmitApplication={handleSubmitApplication}
+                        onEditDocument={(documentId) => setEditDocumentId(documentId)}
+                        onManageAttachments={(documentId) => setManageDocumentId(documentId)}
+                        onInspectionReport={(documentId) => setInspectionReportDocumentId(documentId)}
+                        onDeleteDocument={(documentId, documentTitle) => {
+                            setDeleteDocumentId(documentId)
+                            setDeleteDocumentTitle(documentTitle)
+                        }}
+                    />
+                ) : activeTab === "returned" ? (
+                    <DocumentsTable
+                        user={user}
+                        year={0}
+                        search=""
+                        status="returned"
+                        headerTitle="Returned Applications"
+                        headerSubtitle="Applications requiring corrections"
+                        onSubmitApplication={handleSubmitApplication}
+                        onEditDocument={(documentId) => setEditDocumentId(documentId)}
+                        onManageAttachments={(documentId) => setManageDocumentId(documentId)}
+                        onInspectionReport={(documentId) => setInspectionReportDocumentId(documentId)}
+                        onDeleteDocument={(documentId, documentTitle) => {
+                            setDeleteDocumentId(documentId)
+                            setDeleteDocumentTitle(documentTitle)
+                        }}
+                    />
+                ) : activeTab === "overdue" ? (
                     <OverdueApplicationsTable
-                        canViewFiles={canViewFiles}
-                        canEditDocument={canEditDocument}
-                        canDeleteDocument={canDeleteDocument}
-                        canInspectionReport={canInspectionReport}
+                        user={user}
                         onEditDocument={(documentId) => setEditDocumentId(documentId)}
                         onManageAttachments={(documentId) => setManageDocumentId(documentId)}
                         onInspectionReport={(documentId) => setInspectionReportDocumentId(documentId)}
@@ -725,6 +806,7 @@ export default function Dashboard() {
                     {/* Search results across selected year (or all years) */}
                     {debouncedDocSearch && (
                         <DocumentsTable
+                            user={user}
                             year={selectedYear}
                             month={selectedMonth?.month}
                             monthName={selectedMonth?.month_name}
@@ -738,11 +820,7 @@ export default function Dashboard() {
                             }
                             headerSubtitle={`Matching "${debouncedDocSearch}"`}
                             onClose={() => setDocSearch("")}
-                            canViewFiles={canViewFiles}
-                            canEditDocument={canEditDocument}
-                            canDeleteDocument={canDeleteDocument}
-                            canInspectionReport={canInspectionReport}
-                            canGenerateLc={canGenerateLc}
+                            onSubmitApplication={handleSubmitApplication}
                             onEditDocument={(documentId) => setEditDocumentId(documentId)}
                             onManageAttachments={(documentId) => setManageDocumentId(documentId)}
                             onInspectionReport={(documentId) => setInspectionReportDocumentId(documentId)}
@@ -756,17 +834,14 @@ export default function Dashboard() {
                     {/* Month documents table (when a month is selected and not searching) */}
                     {selectedMonth && !debouncedDocSearch && (
                         <DocumentsTable
+                            user={user}
                             year={selectedYear}
                             month={selectedMonth.month}
                             monthName={selectedMonth.month_name}
                             search=""
                             headerTitle={`${selectedMonth.month_name} ${selectedYear > 0 ? selectedYear : ""}`.trim()}
                             onClose={() => setSelectedMonth(null)}
-                            canViewFiles={canViewFiles}
-                            canEditDocument={canEditDocument}
-                            canDeleteDocument={canDeleteDocument}
-                            canInspectionReport={canInspectionReport}
-                            canGenerateLc={canGenerateLc}
+                            onSubmitApplication={handleSubmitApplication}
                             onEditDocument={(documentId) => setEditDocumentId(documentId)}
                             onManageAttachments={(documentId) => setManageDocumentId(documentId)}
                             onInspectionReport={(documentId) => setInspectionReportDocumentId(documentId)}

@@ -8,6 +8,7 @@ class DocumentAttachment extends Model
 {
     protected $fillable = [
         'document_id',
+        'inspection_report_id',
         'uploaded_by',
         'file_path',
         'file_name',
@@ -21,8 +22,23 @@ class DocumentAttachment extends Model
         return $this->belongsTo(Document::class);
     }
 
+    public function inspectionReport()
+    {
+        return $this->belongsTo(InspectionReport::class);
+    }
+
     public function uploader()
     {
         return $this->belongsTo(User::class, 'uploaded_by');
+    }
+
+    public function isInspectionPhoto(): bool
+    {
+        return $this->attachment_type === 'inspection_photo';
+    }
+
+    public function isReviewedInspectionReport(): bool
+    {
+        return $this->attachment_type === 'reviewed_inspection_report';
     }
 }

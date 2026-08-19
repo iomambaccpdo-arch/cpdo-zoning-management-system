@@ -39,7 +39,7 @@ export function GenerateLocationalClearanceButton({
     const canGenerate = canGenerateLocationalClearance(user)
 
     const hasFullContext =
-        document.status === "completed" &&
+        document.status === "approved" &&
         document.inspection_report !== undefined
 
     const eligibility = hasFullContext
@@ -62,7 +62,7 @@ export function GenerateLocationalClearanceButton({
         },
     })
 
-    if (!canGenerate || document.status !== "completed") {
+    if (!canGenerate || document.status !== "approved") {
         return null
     }
 
