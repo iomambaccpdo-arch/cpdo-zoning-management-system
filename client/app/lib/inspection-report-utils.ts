@@ -1,6 +1,23 @@
 import type { Document, DocumentBuilding, DocumentLot, FieldVerificationEntry } from "~/api/DocumentService"
-import { formatDocumentAreaDetails } from "~/lib/document-property-utils"
+import type { ProjectType, SpecificProjectType, Zoning } from "~/api/ZoningService"
+import {
+    deduplicatePurokPrefix,
+    formatDocumentAreaDetails,
+    formatDocumentLocationDetails,
+    formatPurokName,
+} from "~/lib/document-property-utils"
 import { displayZoningClassificationName } from "~/lib/zoning-utils"
+import { stripLengthUnit } from "~/lib/measurement-utils"
+
+export interface EncodedProjectType {
+    zoningId: number | null
+    projectTypeId: number | null
+    specificProjectTypeId: number | null
+    zoningName: string
+    projectTypeName: string
+    specificProjectTypeName: string
+    label: string
+}
 
 export interface InspectionReportPrefill {
     locationalClearanceNumber: string
@@ -10,8 +27,10 @@ export interface InspectionReportPrefill {
     applicantAddress: string
     corporationAddress: string
     projectType: string
+    encodedProjectType: EncodedProjectType
     areaDetails: string
     locationDetails: string
+    coordinates: string
     buildings: DocumentBuilding[]
     lots: DocumentLot[]
     projectClassification: string
@@ -20,6 +39,30 @@ export interface InspectionReportPrefill {
 
 export type FieldVerificationsMap = Record<string, FieldVerificationEntry>
 
+export const COORDINATES_FIELD_KEY = "coordinates"
+
+export const COORDINATES_VERIFICATION_STATUSES = {
+    NOT_YET_VERIFIED: "Not Yet Verified",
+    VERIFIED_CORRECT: "Verified – Coordinates Correct",
+    VERIFIED_CORRECTED: "Verified – Coordinates Corrected",
+} as const
+
+export type CoordinatesVerificationStatus =
+    (typeof COORDINATES_VERIFICATION_STATUSES)[keyof typeof COORDINATES_VERIFICATION_STATUSES]
+
+export const PROJECT_TYPE_FIELD_KEY = "project_type"
+
+export const PROJECT_TYPE_SPECIFIC_NA = "N/A"
+
+export const PROJECT_TYPE_VERIFICATION_STATUSES = {
+    NOT_YET_VERIFIED: "Not Yet Verified",
+    VERIFIED_CORRECT: "Verified – Correct",
+    VERIFIED_CORRECTED: "Verified – Corrected",
+} as const
+
+export type ProjectTypeVerificationStatus =
+    (typeof PROJECT_TYPE_VERIFICATION_STATUSES)[keyof typeof PROJECT_TYPE_VERIFICATION_STATUSES]
+
 export const STATIC_VERIFIABLE_FIELD_KEYS = [
     "applicant_name",
     "corporation_name",
@@ -27,6 +70,7 @@ export const STATIC_VERIFIABLE_FIELD_KEYS = [
     "corporation_address",
     "project_type",
     "location",
+    COORDINATES_FIELD_KEY,
     "project_classification",
     "site_zoning_classification",
 ] as const
@@ -101,17 +145,17 @@ export const PROJECT_STATUS_OPTIONS = [
 
 export type ProjectStatusOption = (typeof PROJECT_STATUS_OPTIONS)[number]
 
-/** Standard road right-of-way (RROW) widths */
+/** Standard road right-of-way (RROW) widths, stored as numeric meters */
 export const STANDARD_RROW_OPTIONS = [
-    "60 Meters",
-    "30 Meters",
-    "20 Meters",
-    "15 Meters",
-    "12 Meters",
-    "10 Meters",
-    "8 Meters",
-    "6.5 Meters",
-    "6 Meters",
+    "60",
+    "30",
+    "20",
+    "15",
+    "12",
+    "10",
+    "8",
+    "6.5",
+    "6",
 ] as const
 
 export type StandardRrowOption = (typeof STANDARD_RROW_OPTIONS)[number]
@@ -191,11 +235,11 @@ export function normalizeFrontages(
                 key: option.key,
                 label: option.label,
                 name: entry.name?.toString() ?? "",
-                standardRrow: (entry.standardRrow ?? entry.standard_rrow)?.toString() ?? "",
-                actualRrow: (entry.actualRrow ?? entry.actual_rrow)?.toString() ?? "",
-                minSetback: (entry.minSetback ?? entry.min_setback)?.toString() ?? "",
-                asPerPlan: (entry.asPerPlan ?? entry.as_per_plan)?.toString() ?? "",
-                frontage: entry.frontage?.toString() ?? "",
+                standardRrow: stripLengthUnit(entry.standardRrow ?? entry.standard_rrow),
+                actualRrow: stripLengthUnit(entry.actualRrow ?? entry.actual_rrow),
+                minSetback: stripLengthUnit(entry.minSetback ?? entry.min_setback),
+                asPerPlan: stripLengthUnit(entry.asPerPlan ?? entry.as_per_plan),
+                frontage: stripLengthUnit(entry.frontage),
                 remarks: entry.remarks?.toString() ?? "",
             }
         })
@@ -204,11 +248,11 @@ export function normalizeFrontages(
     if (legacy) {
         const main = emptyFrontageRoad(0)
         main.name = legacy.road_category ?? ""
-        main.standardRrow = legacy.road_standard_rrow ?? ""
-        main.actualRrow = legacy.road_actual_rrow ?? ""
-        main.minSetback = legacy.road_min_setback ?? ""
-        main.asPerPlan = legacy.road_as_per_plan ?? ""
-        main.frontage = legacy.front_setback ?? ""
+        main.standardRrow = stripLengthUnit(legacy.road_standard_rrow)
+        main.actualRrow = stripLengthUnit(legacy.road_actual_rrow)
+        main.minSetback = stripLengthUnit(legacy.road_min_setback)
+        main.asPerPlan = stripLengthUnit(legacy.road_as_per_plan)
+        main.frontage = stripLengthUnit(legacy.front_setback)
         main.remarks = legacy.road_remarks ?? ""
 
         const hasLegacy = [
@@ -257,7 +301,7 @@ export type RightOverLandOption = (typeof RIGHT_OVER_LAND_OPTIONS)[number]
 export function formatDocumentAddress(document: Document): string {
     const parts = [
         document.landmark,
-        document.purok?.name ? `Purok ${document.purok.name}` : null,
+        formatPurokName(document.purok?.name),
         document.barangay?.name,
         "Panabo City",
     ].filter(Boolean)
@@ -270,22 +314,19 @@ export function buildDefaultAreaDetails(document: Document): string {
 }
 
 export function buildDefaultLocationDetails(document: Document): string {
-    const parts = [
-        document.purok?.name ? `Purok ${document.purok.name}` : null,
-        document.barangay?.name ? `Brgy. ${document.barangay.name}` : null,
-        "Panabo City",
-    ].filter(Boolean)
-
-    return parts.join(", ")
+    return formatDocumentLocationDetails(document)
 }
 
 export function buildLocationalClearanceLocation(
     document: Document,
     locationDetails?: string | null,
     landmark?: string | null,
+    verifiedCoordinates?: string | null,
 ): string {
-    const coords = document.coordinates?.trim()
-    let location = locationDetails?.trim() || buildDefaultLocationDetails(document)
+    const coords = verifiedCoordinates?.trim() || document.coordinates?.trim()
+    let location = deduplicatePurokPrefix(
+        locationDetails?.trim() || buildDefaultLocationDetails(document),
+    )
     const landmarkText = landmark?.trim()
 
     if (landmarkText) {
@@ -300,10 +341,7 @@ export function buildLocationalClearanceLocation(
 }
 
 export function buildInspectionReportPrefill(document: Document): InspectionReportPrefill {
-    const projectTypeParts = [
-        document.project_type?.name,
-        document.specific_project_type?.name,
-    ].filter(Boolean)
+    const encodedProjectType = encodedProjectTypeFromDocument(document)
 
     return {
         locationalClearanceNumber: document.zoning_application_no,
@@ -312,9 +350,11 @@ export function buildInspectionReportPrefill(document: Document): InspectionRepo
         corporationName: document.corporation_name?.trim() || "",
         applicantAddress: formatDocumentAddress(document),
         corporationAddress: document.corporation_address?.trim() || "",
-        projectType: projectTypeParts.join(" — ") || "—",
+        projectType: encodedProjectType.label,
+        encodedProjectType,
         areaDetails: buildDefaultAreaDetails(document),
         locationDetails: buildDefaultLocationDetails(document),
+        coordinates: document.coordinates?.trim() || "",
         buildings: document.buildings ?? [],
         lots: document.lots ?? [],
         projectClassification: displayZoningClassificationName(document.zoning?.name),
@@ -341,8 +381,22 @@ export function buildVerifiableFieldKeys(prefill: InspectionReportPrefill): stri
 
 export function emptyFieldVerifications(keys: string[]): FieldVerificationsMap {
     return Object.fromEntries(
-        keys.map((key) => [key, { verified: false, correction: "" }]),
+        keys.map((key) => [key, emptyFieldVerification(key)]),
     )
+}
+
+function emptyFieldVerification(key: string): FieldVerificationEntry {
+    if (key === PROJECT_TYPE_FIELD_KEY) {
+        return {
+            verified: false,
+            correction: "",
+            zoning_id: "",
+            project_type_id: "",
+            specific_project_type_id: "",
+        }
+    }
+
+    return { verified: false, correction: "" }
 }
 
 export function normalizeFieldVerifications(
@@ -364,6 +418,13 @@ export function normalizeFieldVerifications(
         normalized[key] = {
             verified: Boolean(entry.verified),
             correction: entry.correction?.toString() ?? "",
+            ...(key === PROJECT_TYPE_FIELD_KEY
+                ? {
+                    zoning_id: idToFormValue(entry.zoning_id),
+                    project_type_id: idToFormValue(entry.project_type_id),
+                    specific_project_type_id: specificIdToFormValue(entry.specific_project_type_id, entry.project_type_id),
+                }
+                : {}),
         }
     }
 
@@ -374,14 +435,19 @@ export function getFieldVerification(
     verifications: FieldVerificationsMap | null | undefined,
     key: string,
 ): FieldVerificationEntry {
-    return verifications?.[key] ?? { verified: false, correction: "" }
+    return verifications?.[key] ?? emptyFieldVerification(key)
 }
 
 export function resolvedVerifiedValue(
     encodedValue: string,
     verifications: FieldVerificationsMap | null | undefined,
     key: string,
+    zonings?: Zoning[],
 ): string {
+    if (key === PROJECT_TYPE_FIELD_KEY) {
+        return resolveVerifiedProjectType(encodedValue, verifications, zonings)
+    }
+
     const entry = getFieldVerification(verifications, key)
     if (entry.verified) {
         return encodedValue
@@ -389,6 +455,377 @@ export function resolvedVerifiedValue(
 
     const correction = entry.correction?.trim()
     return correction || encodedValue
+}
+
+export function hydrateCoordinatesVerification(
+    keys: string[],
+    existing?: Record<string, Partial<FieldVerificationEntry> | null> | null,
+    encoded?: string | null,
+    gpsCoordinates?: string | null,
+): FieldVerificationsMap {
+    const normalized = normalizeFieldVerifications(keys, existing)
+    const current = getFieldVerification(normalized, COORDINATES_FIELD_KEY)
+
+    if (current.verified || current.correction.trim()) {
+        return normalized
+    }
+
+    const gps = gpsCoordinates?.trim() ?? ""
+    const encodedTrim = encoded?.trim() ?? ""
+
+    if (gps && encodedTrim && gps !== encodedTrim) {
+        normalized[COORDINATES_FIELD_KEY] = {
+            verified: false,
+            correction: gps,
+        }
+    }
+
+    return normalized
+}
+
+export function getCoordinatesVerificationStatus(
+    encoded?: string | null,
+    verifications?: FieldVerificationsMap | null,
+    gpsCoordinates?: string | null,
+): CoordinatesVerificationStatus {
+    const entry = getFieldVerification(verifications, COORDINATES_FIELD_KEY)
+
+    if (entry.verified) {
+        return COORDINATES_VERIFICATION_STATUSES.VERIFIED_CORRECT
+    }
+
+    if (entry.correction?.trim()) {
+        return COORDINATES_VERIFICATION_STATUSES.VERIFIED_CORRECTED
+    }
+
+    const gps = gpsCoordinates?.trim() ?? ""
+    const encodedTrim = encoded?.trim() ?? ""
+
+    if (gps && encodedTrim && gps !== encodedTrim) {
+        return COORDINATES_VERIFICATION_STATUSES.VERIFIED_CORRECTED
+    }
+
+    return COORDINATES_VERIFICATION_STATUSES.NOT_YET_VERIFIED
+}
+
+export function resolveVerifiedCoordinates(
+    encoded?: string | null,
+    verifications?: FieldVerificationsMap | null,
+    gpsCoordinates?: string | null,
+): string {
+    const entry = getFieldVerification(verifications, COORDINATES_FIELD_KEY)
+
+    if (entry.verified) {
+        return encoded?.trim() || ""
+    }
+
+    const correction = entry.correction?.trim()
+    if (correction) {
+        return correction
+    }
+
+    return gpsCoordinates?.trim() || encoded?.trim() || ""
+}
+
+export function verifiedCoordinatesForSave(
+    encoded?: string | null,
+    verifications?: FieldVerificationsMap | null,
+): string {
+    const entry = getFieldVerification(verifications, COORDINATES_FIELD_KEY)
+
+    if (entry.verified) {
+        return encoded?.trim() || ""
+    }
+
+    return entry.correction?.trim() || ""
+}
+
+export function encodedProjectTypeFromDocument(document: Document): EncodedProjectType {
+    const specificName = document.specific_project_type?.name?.trim() || ""
+
+    return {
+        zoningId: document.zoning_id ?? document.zoning?.id ?? null,
+        projectTypeId: document.project_type_id ?? document.project_type?.id ?? null,
+        specificProjectTypeId: document.specific_project_type_id ?? document.specific_project_type?.id ?? null,
+        zoningName: displayZoningClassificationName(document.zoning?.name),
+        projectTypeName: document.project_type?.name?.trim() || "—",
+        specificProjectTypeName: specificName || PROJECT_TYPE_SPECIFIC_NA,
+        label: formatProjectTypeLabel(document.project_type?.name, specificName),
+    }
+}
+
+export function formatProjectTypeLabel(
+    projectTypeName?: string | null,
+    specificProjectTypeName?: string | null,
+): string {
+    const parts = [projectTypeName, specificProjectTypeName]
+        .map((part) => part?.trim() ?? "")
+        .filter((part) => part !== "" && part.toUpperCase() !== PROJECT_TYPE_SPECIFIC_NA)
+
+    return parts.join(" — ") || "—"
+}
+
+export function formatClearanceProjectTypeLabel(
+    zoningName?: string | null,
+    projectTypeName?: string | null,
+    specificProjectTypeName?: string | null,
+): string {
+    const lines: string[] = []
+    const zoning = formatZoningClassificationName(zoningName)
+    const projectType = projectTypeName?.trim() ?? ""
+    const specific = specificProjectTypeName?.trim() ?? ""
+
+    if (zoning && zoning !== "—") {
+        lines.push(zoning)
+    }
+
+    if (projectType && projectType !== "—" && projectType.toUpperCase() !== PROJECT_TYPE_SPECIFIC_NA) {
+        lines.push(projectType)
+    }
+
+    if (specific && specific.toUpperCase() !== PROJECT_TYPE_SPECIFIC_NA) {
+        lines.push(`Specific Project Type: ${specific}`)
+    }
+
+    return lines.join("\n") || "—"
+}
+
+export function projectTypesForZoning(
+    zonings: Zoning[] | undefined,
+    zoningId: string | number | null | undefined,
+): ProjectType[] {
+    if (!zonings || zoningId === null || zoningId === undefined || zoningId === "") {
+        return []
+    }
+
+    return zonings.find((zoning) => zoning.id.toString() === zoningId.toString())?.project_types ?? []
+}
+
+export function specificProjectTypesForProjectType(
+    projectTypes: ProjectType[],
+    projectTypeId: string | number | null | undefined,
+): SpecificProjectType[] {
+    if (projectTypeId === null || projectTypeId === undefined || projectTypeId === "") {
+        return []
+    }
+
+    return projectTypes.find((projectType) => projectType.id.toString() === projectTypeId.toString())
+        ?.specific_project_types ?? []
+}
+
+export function projectTypeLabelFromSelection(
+    zonings: Zoning[] | undefined,
+    zoningId?: string | number | null,
+    projectTypeId?: string | number | null,
+    specificProjectTypeId?: string | number | null,
+): string {
+    const names = projectTypeNamesFromSelection(zonings, zoningId, projectTypeId, specificProjectTypeId)
+
+    return formatProjectTypeLabel(names.projectTypeName, names.specificProjectTypeName)
+}
+
+export function clearanceProjectTypeLabelFromSelection(
+    zonings: Zoning[] | undefined,
+    zoningId?: string | number | null,
+    projectTypeId?: string | number | null,
+    specificProjectTypeId?: string | number | null,
+): string {
+    const names = projectTypeNamesFromSelection(zonings, zoningId, projectTypeId, specificProjectTypeId)
+
+    if (!names.zoningName && !names.projectTypeName) {
+        return "—"
+    }
+
+    return formatClearanceProjectTypeLabel(
+        names.zoningName,
+        names.projectTypeName,
+        names.specificProjectTypeName,
+    )
+}
+
+function projectTypeNamesFromSelection(
+    zonings: Zoning[] | undefined,
+    zoningId?: string | number | null,
+    projectTypeId?: string | number | null,
+    specificProjectTypeId?: string | number | null,
+): {
+    zoningName?: string
+    projectTypeName?: string
+    specificProjectTypeName?: string
+} {
+    if (!zonings || zoningId === null || zoningId === undefined || zoningId === "") {
+        return {}
+    }
+
+    const zoning = zonings.find((item) => item.id.toString() === String(zoningId))
+    const projectTypes = zoning?.project_types ?? []
+    const projectType = projectTypes.find((item) => item.id.toString() === String(projectTypeId ?? ""))
+    const specificTypes = projectType?.specific_project_types ?? []
+    const specific = specificTypes.find((item) => item.id.toString() === String(specificProjectTypeId ?? ""))
+
+    return {
+        zoningName: zoning?.name,
+        projectTypeName: projectType?.name,
+        specificProjectTypeName: specific?.name,
+    }
+}
+
+export function hasCompleteProjectTypeSelection(entry: FieldVerificationEntry): boolean {
+    const zoningId = idToFormValue(entry.zoning_id)
+    const projectTypeId = idToFormValue(entry.project_type_id)
+    const specificId = entry.specific_project_type_id
+
+    return Boolean(zoningId) && Boolean(projectTypeId) && specificId !== null && specificId !== undefined && String(specificId) !== ""
+}
+
+export function projectTypeSelectionMatchesEncoded(
+    encoded: EncodedProjectType,
+    entry: FieldVerificationEntry,
+): boolean {
+    return idToFormValue(entry.zoning_id) === idToFormValue(encoded.zoningId)
+        && idToFormValue(entry.project_type_id) === idToFormValue(encoded.projectTypeId)
+        && specificIdToFormValue(entry.specific_project_type_id, entry.project_type_id)
+            === specificIdToFormValue(encoded.specificProjectTypeId, encoded.projectTypeId)
+}
+
+export function getProjectTypeVerificationStatus(
+    encoded: EncodedProjectType,
+    verifications?: FieldVerificationsMap | null,
+): ProjectTypeVerificationStatus {
+    const entry = getFieldVerification(verifications, PROJECT_TYPE_FIELD_KEY)
+
+    if (entry.verified) {
+        return PROJECT_TYPE_VERIFICATION_STATUSES.VERIFIED_CORRECT
+    }
+
+    if (hasCompleteProjectTypeSelection(entry)) {
+        return projectTypeSelectionMatchesEncoded(encoded, entry)
+            ? PROJECT_TYPE_VERIFICATION_STATUSES.VERIFIED_CORRECT
+            : PROJECT_TYPE_VERIFICATION_STATUSES.VERIFIED_CORRECTED
+    }
+
+    if (entry.correction?.trim()) {
+        return PROJECT_TYPE_VERIFICATION_STATUSES.VERIFIED_CORRECTED
+    }
+
+    return PROJECT_TYPE_VERIFICATION_STATUSES.NOT_YET_VERIFIED
+}
+
+export function resolveVerifiedProjectType(
+    encodedLabel: string,
+    verifications?: FieldVerificationsMap | null,
+    zonings?: Zoning[],
+): string {
+    const entry = getFieldVerification(verifications, PROJECT_TYPE_FIELD_KEY)
+
+    if (entry.verified) {
+        return encodedLabel
+    }
+
+    const fromIds = projectTypeLabelFromSelection(
+        zonings,
+        entry.zoning_id,
+        entry.project_type_id,
+        entry.specific_project_type_id,
+    )
+    if (fromIds !== "—") {
+        return fromIds
+    }
+
+    const correction = entry.correction?.trim()
+    return correction || encodedLabel
+}
+
+export function resolveVerifiedClearanceProjectType(
+    encoded: EncodedProjectType,
+    verifications?: FieldVerificationsMap | null,
+    zonings?: Zoning[],
+): string {
+    const encodedLabel = formatClearanceProjectTypeLabel(
+        encoded.zoningName,
+        encoded.projectTypeName,
+        encoded.specificProjectTypeName,
+    )
+    const entry = getFieldVerification(verifications, PROJECT_TYPE_FIELD_KEY)
+
+    if (entry.verified) {
+        return encodedLabel
+    }
+
+    const fromIds = clearanceProjectTypeLabelFromSelection(
+        zonings,
+        entry.zoning_id,
+        entry.project_type_id,
+        entry.specific_project_type_id,
+    )
+    if (fromIds !== "—") {
+        return fromIds
+    }
+
+    if (hasCompleteProjectTypeSelection(entry) && projectTypeSelectionMatchesEncoded(encoded, entry)) {
+        return encodedLabel
+    }
+
+    const correction = entry.correction?.trim()
+    return correction || encodedLabel
+}
+
+export function serializeProjectTypeVerification(
+    verifications?: FieldVerificationsMap,
+): FieldVerificationsMap | undefined {
+    if (!verifications) {
+        return verifications
+    }
+
+    const entry = verifications[PROJECT_TYPE_FIELD_KEY]
+    if (!entry) {
+        return verifications
+    }
+
+    return {
+        ...verifications,
+        [PROJECT_TYPE_FIELD_KEY]: {
+            ...entry,
+            zoning_id: numericIdOrNull(entry.zoning_id),
+            project_type_id: numericIdOrNull(entry.project_type_id),
+            specific_project_type_id: entry.specific_project_type_id === PROJECT_TYPE_SPECIFIC_NA
+                ? null
+                : numericIdOrNull(entry.specific_project_type_id),
+        },
+    }
+}
+
+function numericIdOrNull(value: number | string | null | undefined): number | null {
+    if (value === null || value === undefined || value === "") {
+        return null
+    }
+
+    const parsed = Number(value)
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+}
+
+function idToFormValue(value: number | string | null | undefined): string {
+    if (value === null || value === undefined || value === "") {
+        return ""
+    }
+
+    return String(value)
+}
+
+function specificIdToFormValue(
+    value: number | string | null | undefined,
+    projectTypeId?: number | string | null,
+): string {
+    if (value === PROJECT_TYPE_SPECIFIC_NA) {
+        return PROJECT_TYPE_SPECIFIC_NA
+    }
+
+    const formValue = idToFormValue(value)
+    if (formValue) {
+        return formValue
+    }
+
+    return projectTypeId ? PROJECT_TYPE_SPECIFIC_NA : ""
 }
 
 export const INSPECTION_RECOMMENDATIONS = {
@@ -399,6 +836,18 @@ export const INSPECTION_RECOMMENDATIONS = {
 
 export type InspectionRecommendationValue =
     (typeof INSPECTION_RECOMMENDATIONS)[keyof typeof INSPECTION_RECOMMENDATIONS]
+
+export const INSPECTION_FINDINGS = {
+    ZONING_NON_CONFORMING: "Project Zoning Does Not Conform to Site Zoning",
+    SETBACK_DOES_NOT_COMPLY: "Setback Does Not Comply",
+    RROW_DISTANCE_DOES_NOT_COMPLY: "Distance from Centerline of the Road Does Not Comply",
+    PARKING_REQUIREMENT_NOT_MET: "Parking Requirement Not Met",
+    GEOGRAPHIC_COORDINATES_NEED_VERIFICATION: "Geographic Coordinates Need Verification",
+    CORRECTED_SITE_PLAN_REQUIRED: "Corrected Site Plan Required",
+    INSPECTION_PHOTOS_REQUIRED: "Inspection Photos Required",
+    MISSING_BARANGAY_CLEARANCE: "Missing Barangay Clearance",
+    ADDITIONAL_DOCUMENT_REQUIRED: "Additional Document Required",
+} as const
 
 export type InspectionRecommendationInput = {
     projectZoningClassification?: string | null
@@ -418,7 +867,15 @@ export type InspectionRecommendationInput = {
     parkingAsPerPlan?: Partial<ParkingSpaceRequirementMap> | null
     typeOfLot?: string | null
     lackingDocuments?: string | null
+    fieldVerifications?: FieldVerificationsMap | null
+    coordinatesNeedVerification?: boolean
 }
+
+const SITE_PLAN_FIELD_KEY_PATTERN =
+    /^(project_type|location|area_details|building_\d+_(name|area)|lot_\d+_(land_title|area))$/
+
+const GENERIC_LACKING_DOCUMENT_PATTERN =
+    /^(additional\s+documents?(\s+required)?|documents?\s+required|yes|needed|lacking|required)$/i
 
 function isBlank(value: string | null | undefined): boolean {
     return !value || value.trim() === ""
@@ -453,6 +910,59 @@ export function determineInspectionRecommendation(
     }
 
     return INSPECTION_RECOMMENDATIONS.APPROVED
+}
+
+export function collectInspectionFindings(input: InspectionRecommendationInput): string[] {
+    const items: string[] = []
+
+    const project = (input.projectZoningClassification ?? "").trim().toLowerCase()
+    const site = (input.siteZoningClassification ?? "").trim().toLowerCase()
+
+    if (project && site && project !== site) {
+        items.push(INSPECTION_FINDINGS.ZONING_NON_CONFORMING)
+    }
+
+    if (hasSetbackDeficiency(input.frontages)) {
+        items.push(INSPECTION_FINDINGS.SETBACK_DOES_NOT_COMPLY)
+    }
+
+    if (hasRrowDistanceDeficiency(input.frontages, input.distanceCenterLineToBuilding)) {
+        items.push(INSPECTION_FINDINGS.RROW_DISTANCE_DOES_NOT_COMPLY)
+    }
+
+    if (hasParkingDeficiency(input.parkingSpaceRequirement, input.parkingAsPerPlan)) {
+        items.push(INSPECTION_FINDINGS.PARKING_REQUIREMENT_NOT_MET)
+    }
+
+    if (input.coordinatesNeedVerification) {
+        items.push(INSPECTION_FINDINGS.GEOGRAPHIC_COORDINATES_NEED_VERIFICATION)
+    }
+
+    if (hasCorrectedSitePlan(input.fieldVerifications)) {
+        items.push(INSPECTION_FINDINGS.CORRECTED_SITE_PLAN_REQUIRED)
+    }
+
+    if (!input.hasInspectionPhotos) {
+        items.push(INSPECTION_FINDINGS.INSPECTION_PHOTOS_REQUIRED)
+    }
+
+    for (const item of lackingDocumentItems(input.lackingDocuments)) {
+        if (!items.includes(item)) {
+            items.push(item)
+        }
+    }
+
+    return items
+}
+
+export function evaluateInspectionRecommendation(input: InspectionRecommendationInput): {
+    recommendation: InspectionRecommendationValue
+    findings: string[]
+} {
+    return {
+        recommendation: determineInspectionRecommendation(input),
+        findings: collectInspectionFindings(input),
+    }
 }
 
 function isEvaluationIncomplete(input: InspectionRecommendationInput): boolean {
@@ -555,4 +1065,64 @@ function hasLackingDocuments(value?: string | null): boolean {
     }
 
     return value!.trim().toUpperCase() !== "N/A"
+}
+
+function hasCorrectedSitePlan(verifications?: FieldVerificationsMap | null): boolean {
+    if (!verifications) {
+        return false
+    }
+
+    return Object.entries(verifications).some(([key, entry]) => {
+        if (!SITE_PLAN_FIELD_KEY_PATTERN.test(key)) {
+            return false
+        }
+
+        return !entry.verified && (
+            Boolean(entry.correction?.trim())
+            || (key === PROJECT_TYPE_FIELD_KEY && (
+                Boolean(idToFormValue(entry.zoning_id))
+                || Boolean(idToFormValue(entry.project_type_id))
+            ))
+        )
+    })
+}
+
+function lackingDocumentItems(value?: string | null): string[] {
+    if (!hasLackingDocuments(value)) {
+        return []
+    }
+
+    const items: string[] = []
+
+    for (const part of value!.split(/[\n;]+|,/)) {
+        const trimmed = part.trim()
+        if (!trimmed) {
+            continue
+        }
+
+        const canonical = canonicalizeLackingDocumentItem(trimmed)
+        if (!items.includes(canonical)) {
+            items.push(canonical)
+        }
+    }
+
+    return items.length > 0 ? items : [INSPECTION_FINDINGS.ADDITIONAL_DOCUMENT_REQUIRED]
+}
+
+function canonicalizeLackingDocumentItem(item: string): string {
+    const lower = item.toLowerCase()
+
+    if (lower.includes("barangay")) {
+        return INSPECTION_FINDINGS.MISSING_BARANGAY_CLEARANCE
+    }
+
+    if (lower.includes("site plan")) {
+        return INSPECTION_FINDINGS.CORRECTED_SITE_PLAN_REQUIRED
+    }
+
+    if (GENERIC_LACKING_DOCUMENT_PATTERN.test(item)) {
+        return INSPECTION_FINDINGS.ADDITIONAL_DOCUMENT_REQUIRED
+    }
+
+    return item
 }

@@ -10,8 +10,22 @@ import {
 import {
     formatFloorAreaForClearance,
     formatLotAreaForClearance,
+    formatPurokName,
 } from "~/lib/document-property-utils"
-import { buildLocationalClearanceLocation } from "~/lib/inspection-report-utils"
+import {
+    buildLocationalClearanceLocation,
+    encodedProjectTypeFromDocument,
+    resolveVerifiedClearanceProjectType,
+    resolveVerifiedCoordinates,
+} from "~/lib/inspection-report-utils"
+import { formatLength } from "~/lib/measurement-utils"
+
+export type LocationalClearanceCopyVariant = "cpdo" | "client"
+
+export const LOCATIONAL_CLEARANCE_COPY_LABELS: Record<LocationalClearanceCopyVariant, string> = {
+    cpdo: "CPDO RECEIVED COPY",
+    client: "",
+}
 
 export interface LocationalClearanceData {
     applicationNumber: string
@@ -40,8 +54,7 @@ export interface LocationalClearanceData {
     orNumber: string
     amountPaid: string
     datePaid: string
-    dateOfInspection: string
-    dateOfLcPrepared: string
+    dateOfInspectionAndLcPrepared: string
     documentTitle: string
 }
 
@@ -62,7 +75,7 @@ function formatDate(value: string | null | undefined): string {
 function formatAddress(document: Document): string {
     const parts = [
         document.landmark,
-        document.purok?.name ? `Purok ${document.purok.name}` : null,
+        formatPurokName(document.purok?.name),
         document.barangay?.name,
         "Panabo City",
     ].filter(Boolean)
@@ -137,48 +150,72 @@ function additionalConditionsText(document: Document): string {
     return formatConditionsList(LOCATIONAL_CLEARANCE_ADDITIONAL_CONDITIONS)
 }
 
+function paymentOrNumber(document: Document): string {
+    return document.or_number?.trim() || "—"
+}
+
+function paymentAmount(document: Document): string {
+    if (document.amount_paid === null || document.amount_paid === undefined || document.amount_paid === "") {
+        return "—"
+    }
+
+    const amount = Number(document.amount_paid)
+    if (Number.isNaN(amount)) {
+        return "—"
+    }
+
+    return `₱${amount.toLocaleString("en-PH", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    })}`
+}
+
 export function buildLocationalClearanceData(document: Document): LocationalClearanceData {
     const report = document.inspection_report
-    const projectTypeParts = [document.project_type?.name, document.specific_project_type?.name].filter(Boolean)
     const dateApproved = report?.submitted_at ?? document.created_at
-
-    const latestAttachment = document.attachments
-        ?.filter((a) => a.attachment_type === "document" || !a.attachment_type)
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
 
     return {
         applicationNumber: document.zoning_application_no,
         decisionNumber: decisionNumber(document),
         dateReceived: formatDate(document.date_of_application),
         dateApproved: formatDate(dateApproved),
-        dateRequirementsComplied: formatDate(latestAttachment?.created_at ?? document.date_of_application),
+        dateRequirementsComplied: formatDate(document.date_requirements_complied),
         applicantName: document.applicant_name,
         corporationName: document.corporation_name?.trim() || "",
         applicantAddress: formatAddress(document),
         corporationAddress: document.corporation_address?.trim() || "",
-        projectType: projectTypeParts.join(" — ") || "—",
+        projectType: resolveVerifiedClearanceProjectType(
+            encodedProjectTypeFromDocument(document),
+            report?.field_verifications,
+        ),
         location: buildLocationalClearanceLocation(
             document,
             report?.location_details,
             report?.landmark,
+            resolveVerifiedCoordinates(
+                document.coordinates,
+                report?.field_verifications,
+                report?.gps_coordinates,
+            ),
         ),
         floorArea: formatFloorAreaForClearance(document),
         lotArea: formatLotAreaForClearance(document),
-        frontageAtMainRoad: report?.front_setback?.trim() || "—",
+        frontageAtMainRoad: formatLength(report?.front_setback, "—"),
         typeOfLot: report?.type_of_lot?.trim() || "—",
-        standardRoadRightOfWay: report?.road_standard_rrow?.trim() || "—",
-        distanceCenterLineToBuilding: report?.distance_center_line_to_building?.trim() || "—",
+        standardRoadRightOfWay: formatLength(report?.road_standard_rrow, "—"),
+        distanceCenterLineToBuilding: formatLength(report?.distance_center_line_to_building, "—"),
         rightOverLand: report?.right_over_land?.trim() || "—",
         decision: DEFAULT_LOCATIONAL_CLEARANCE_DECISION,
         conditions: formatConditionsList(LOCATIONAL_CLEARANCE_CONDITIONS),
         additionalConditions: additionalConditionsText(document),
         recommendingApprovalOfficer: recommendingOfficer(document),
         approvingOfficer: approvingOfficer(document),
-        orNumber: "—",
-        amountPaid: "—",
-        datePaid: "—",
-        dateOfInspection: formatDate(report?.inspection_date),
-        dateOfLcPrepared: formatDate(report?.submitted_at ?? document.updated_at),
+        orNumber: paymentOrNumber(document),
+        amountPaid: paymentAmount(document),
+        datePaid: formatDate(document.date_paid),
+        dateOfInspectionAndLcPrepared: formatDate(
+            report?.inspection_date ?? report?.submitted_at ?? new Date().toISOString(),
+        ),
         documentTitle: document.document_title,
     }
 }
@@ -204,4 +241,8 @@ export function checkLocationalClearanceEligibility(
         eligible: reasons.length === 0,
         reasons,
     }
+}
+
+export function hasGeneratedLocationalClearance(document: Document): boolean {
+    return Boolean(document.locational_clearance_generated_at)
 }

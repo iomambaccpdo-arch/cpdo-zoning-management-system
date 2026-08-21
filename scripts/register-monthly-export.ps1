@@ -3,8 +3,8 @@
 # Right-click -> Run with PowerShell
 
 $ErrorActionPreference = "Stop"
-$ScriptsDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ExportScript = Join-Path $ScriptsDir "export-sync-package.ps1"
+$ScriptsDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$ExportScript = Join-Path $ScriptsDir "Export\export-sync-package.ps1"
 
 if (-not (Test-Path -LiteralPath $ExportScript)) {
     Write-Error "Missing: $ExportScript"

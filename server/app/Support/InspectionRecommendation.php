@@ -10,6 +10,24 @@ class InspectionRecommendation
 
     public const APPROVED = 'Approved';
 
+    public const FINDING_ZONING_NON_CONFORMING = 'Project Zoning Does Not Conform to Site Zoning';
+
+    public const FINDING_SETBACK_DOES_NOT_COMPLY = 'Setback Does Not Comply';
+
+    public const FINDING_RROW_DISTANCE_DOES_NOT_COMPLY = 'Distance from Centerline of the Road Does Not Comply';
+
+    public const FINDING_PARKING_REQUIREMENT_NOT_MET = 'Parking Requirement Not Met';
+
+    public const FINDING_GEOGRAPHIC_COORDINATES_NEED_VERIFICATION = 'Geographic Coordinates Need Verification';
+
+    public const FINDING_CORRECTED_SITE_PLAN_REQUIRED = 'Corrected Site Plan Required';
+
+    public const FINDING_INSPECTION_PHOTOS_REQUIRED = 'Inspection Photos Required';
+
+    public const FINDING_MISSING_BARANGAY_CLEARANCE = 'Missing Barangay Clearance';
+
+    public const FINDING_ADDITIONAL_DOCUMENT_REQUIRED = 'Additional Document Required';
+
     /**
      * @param  array{
      *     project_zoning_classification?: string|null,
@@ -29,7 +47,21 @@ class InspectionRecommendation
      *     parking_as_per_plan?: array<string, string|null>|null,
      *     type_of_lot?: string|null,
      *     lacking_documents?: string|null,
+     *     field_verifications?: array<string, mixed>|null,
+     *     coordinates_need_verification?: bool,
      * }  $input
+     * @return array{recommendation: string, findings: list<string>}
+     */
+    public static function evaluate(array $input): array
+    {
+        return [
+            'recommendation' => self::determine($input),
+            'findings' => self::findings($input),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
      */
     public static function determine(array $input): string
     {
@@ -42,6 +74,57 @@ class InspectionRecommendation
         }
 
         return self::APPROVED;
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     * @return list<string>
+     */
+    public static function findings(array $input): array
+    {
+        $items = [];
+
+        if (self::isNonConforming($input)) {
+            $items[] = self::FINDING_ZONING_NON_CONFORMING;
+        }
+
+        if (self::hasSetbackDeficiency($input['frontages'] ?? null)) {
+            $items[] = self::FINDING_SETBACK_DOES_NOT_COMPLY;
+        }
+
+        if (self::hasRrowDistanceDeficiency(
+            $input['frontages'] ?? null,
+            $input['distance_center_line_to_building'] ?? null,
+        )) {
+            $items[] = self::FINDING_RROW_DISTANCE_DOES_NOT_COMPLY;
+        }
+
+        if (self::hasParkingDeficiency(
+            $input['parking_space_requirement'] ?? null,
+            $input['parking_as_per_plan'] ?? null,
+        )) {
+            $items[] = self::FINDING_PARKING_REQUIREMENT_NOT_MET;
+        }
+
+        if (($input['coordinates_need_verification'] ?? false) === true) {
+            $items[] = self::FINDING_GEOGRAPHIC_COORDINATES_NEED_VERIFICATION;
+        }
+
+        if (self::hasCorrectedSitePlan($input['field_verifications'] ?? null)) {
+            $items[] = self::FINDING_CORRECTED_SITE_PLAN_REQUIRED;
+        }
+
+        if (! ($input['has_inspection_photos'] ?? false)) {
+            $items[] = self::FINDING_INSPECTION_PHOTOS_REQUIRED;
+        }
+
+        foreach (self::lackingDocumentItems($input['lacking_documents'] ?? null) as $item) {
+            if (! in_array($item, $items, true)) {
+                $items[] = $item;
+            }
+        }
+
+        return $items;
     }
 
     /**
@@ -255,6 +338,69 @@ class InspectionRecommendation
         return strcasecmp(trim((string) $value), 'N/A') !== 0;
     }
 
+    /**
+     * @param  array<string, mixed>|null  $verifications
+     */
+    public static function hasCorrectedSitePlan(?array $verifications): bool
+    {
+        if (! is_array($verifications)) {
+            return false;
+        }
+
+        foreach ($verifications as $key => $entry) {
+            if (! is_string($key) || ! self::isSitePlanField($key) || ! is_array($entry)) {
+                continue;
+            }
+
+            if (($entry['verified'] ?? false) === true) {
+                continue;
+            }
+
+            if (trim((string) ($entry['correction'] ?? '')) !== '') {
+                return true;
+            }
+
+            if ($key === 'project_type' && (
+                filled($entry['zoning_id'] ?? null) || filled($entry['project_type_id'] ?? null)
+            )) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return list<string>
+     */
+    public static function lackingDocumentItems(mixed $value): array
+    {
+        if (! self::hasLackingDocuments($value)) {
+            return [];
+        }
+
+        $parts = preg_split('/[\n;]+|,/', (string) $value) ?: [];
+        $items = [];
+
+        foreach ($parts as $part) {
+            $trimmed = trim($part);
+
+            if ($trimmed === '') {
+                continue;
+            }
+
+            $canonical = self::canonicalizeLackingDocumentItem($trimmed);
+
+            if (! in_array($canonical, $items, true)) {
+                $items[] = $canonical;
+            }
+        }
+
+        return $items === []
+            ? [self::FINDING_ADDITIONAL_DOCUMENT_REQUIRED]
+            : $items;
+    }
+
     public static function parseNumber(mixed $value): ?float
     {
         if ($value === null) {
@@ -272,6 +418,33 @@ class InspectionRecommendation
         }
 
         return (float) $matches[1];
+    }
+
+    private static function canonicalizeLackingDocumentItem(string $item): string
+    {
+        $lower = mb_strtolower($item);
+
+        if (str_contains($lower, 'barangay')) {
+            return self::FINDING_MISSING_BARANGAY_CLEARANCE;
+        }
+
+        if (str_contains($lower, 'site plan')) {
+            return self::FINDING_CORRECTED_SITE_PLAN_REQUIRED;
+        }
+
+        if (preg_match('/^(additional\s+documents?(\s+required)?|documents?\s+required|yes|needed|lacking|required)$/i', $item) === 1) {
+            return self::FINDING_ADDITIONAL_DOCUMENT_REQUIRED;
+        }
+
+        return $item;
+    }
+
+    private static function isSitePlanField(string $key): bool
+    {
+        return preg_match(
+            '/^(project_type|location|area_details|building_\d+_(name|area)|lot_\d+_(land_title|area))$/',
+            $key
+        ) === 1;
     }
 
     private static function normalizeComparable(mixed $value): string

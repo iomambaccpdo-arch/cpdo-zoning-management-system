@@ -18,4 +18,28 @@ function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   )
 }
 
-export { Input }
+function InputUnitAddon({
+  unit,
+  children,
+  className,
+}: {
+  unit: string
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <div className={cn("flex w-full min-w-0", className)}>
+      <div className="min-w-0 flex-1 [&_input]:rounded-r-none [&_button]:w-full [&_button]:rounded-r-none">
+        {children}
+      </div>
+      <span
+        aria-hidden="true"
+        className="inline-flex shrink-0 items-center rounded-r-md border border-l-0 border-input bg-muted px-2.5 text-sm text-muted-foreground"
+      >
+        {unit}
+      </span>
+    </div>
+  )
+}
+
+export { Input, InputUnitAddon }

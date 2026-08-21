@@ -8,8 +8,9 @@ import {
     FormLabel,
     FormMessage,
 } from "~/components/ui/form"
-import { Input } from "~/components/ui/input"
+import { Input, InputUnitAddon } from "~/components/ui/input"
 import { emptyBuildingEntry, emptyLotEntry } from "~/lib/document-property-utils"
+import { AREA_UNIT } from "~/lib/measurement-utils"
 
 type BuildingsLotsFormValues = {
     buildings: { name: string; area: string }[]
@@ -91,15 +92,17 @@ export function BuildingsLotsFields({
                                 name={`buildings.${index}.area`}
                                 render={({ field: inputField }) => (
                                     <FormItem>
-                                        <FormLabel>Building Area (sq.m.) *</FormLabel>
-                                        <FormControl>
-                                            <Input
-                                                type="number"
-                                                placeholder="0"
-                                                className="bg-green-50/50"
-                                                {...inputField}
-                                            />
-                                        </FormControl>
+                                        <FormLabel>Building Area *</FormLabel>
+                                        <InputUnitAddon unit={AREA_UNIT}>
+                                            <FormControl>
+                                                <Input
+                                                    type="number"
+                                                    placeholder="0"
+                                                    className="bg-green-50/50"
+                                                    {...inputField}
+                                                />
+                                            </FormControl>
+                                        </InputUnitAddon>
                                         <FormMessage />
                                     </FormItem>
                                 )}
@@ -163,15 +166,17 @@ export function BuildingsLotsFields({
                                 name={`lots.${index}.area`}
                                 render={({ field: inputField }) => (
                                     <FormItem>
-                                        <FormLabel>Lot Area (sq.m.) *</FormLabel>
-                                        <FormControl>
-                                            <Input
-                                                type="number"
-                                                placeholder="0"
-                                                className="bg-green-50/50"
-                                                {...inputField}
-                                            />
-                                        </FormControl>
+                                        <FormLabel>Lot Area *</FormLabel>
+                                        <InputUnitAddon unit={AREA_UNIT}>
+                                            <FormControl>
+                                                <Input
+                                                    type="number"
+                                                    placeholder="0"
+                                                    className="bg-green-50/50"
+                                                    {...inputField}
+                                                />
+                                            </FormControl>
+                                        </InputUnitAddon>
                                         <FormMessage />
                                     </FormItem>
                                 )}

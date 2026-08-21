@@ -1,5 +1,11 @@
-import type { LocationalClearanceData } from "~/lib/locational-clearance-utils"
+import {
+    LOCATIONAL_CLEARANCE_COPY_LABELS,
+    type LocationalClearanceCopyVariant,
+    type LocationalClearanceData,
+} from "~/lib/locational-clearance-utils"
 import { getLcFooterUrl, getLcHeaderUrl } from "~/lib/public-assets"
+
+export type { LocationalClearanceCopyVariant }
 
 function escapeHtml(value: string): string {
     return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -36,26 +42,6 @@ function decisionNo(value: string): string {
     return `LC-${text}`
 }
 
-function rightOverLandHtml(value: string | null | undefined): string {
-    const text = blank(value)
-    const normalized = text.toLowerCase()
-    const isOwner = normalized === "owner"
-    const isLeasee =
-        normalized === "leasee" ||
-        normalized === "lessee" ||
-        normalized.startsWith("lease,") ||
-        normalized.startsWith("lease ")
-    const isOthers = Boolean(text) && !isOwner && !isLeasee
-    const specify = isOthers ? text.toUpperCase() : ""
-
-    return `
-        <span class="rol">${isOwner ? "(X)" : "( )"} Owner</span>
-        <span class="rol">${isLeasee ? "(X)" : "( )"} Leasee</span>
-        <span class="rol">${isOthers ? "(X)" : "( )"} Others, specify :</span>
-        ${specify ? `<span class="data">${escapeHtml(specify)}</span>` : ""}
-    `
-}
-
 function conditionLines(content: string): string {
     return content
         .split("\n")
@@ -84,20 +70,22 @@ function inlineCell(label: string, valueHtml: string): string {
         </td>`
 }
 
-function buildLocationalClearanceHtml(
+function buildLocationalClearancePageHtml(
     data: LocationalClearanceData,
+    copy: LocationalClearanceCopyVariant,
     headerUrl: string,
     footerUrl: string,
 ): string {
     const recommending = splitOfficer(data.recommendingApprovalOfficer)
     const approving = splitOfficer(data.approvingOfficer)
+    const copyLabel = LOCATIONAL_CLEARANCE_COPY_LABELS[copy]
 
     return `
-        <div class="page">
+        <div class="sheet" data-copy="${copy}">
             <img class="band header-band" src="${headerUrl}" alt="City Planning and Development Office" />
 
             <h1 class="doc-title">LOCATIONAL CLEARANCE</h1>
-            <div class="received-copy">CPDO Received Copy</div>
+            <div class="copy-label">${copyLabel ? escapeHtml(copyLabel) : "&nbsp;"}</div>
 
             <table class="lc-table">
                 <colgroup>
@@ -128,7 +116,7 @@ function buildLocationalClearanceHtml(
                         ${stackedCell("ADDRESS OF CORPORATION :", val(data.corporationAddress))}
                     </tr>
                     <tr>
-                        ${stackedCell("TYPE OF PROJECT:", val(data.projectType))}
+                        ${stackedCell("TYPE OF PROJECT:", val(data.projectType, false))}
                         ${stackedCell("LOCATION :", val(data.location))}
                     </tr>
                     <tr>
@@ -148,8 +136,8 @@ function buildLocationalClearanceHtml(
                     </tr>
                     <tr>
                         <td colspan="2">
-                            <div class="lbl">RIGHT OVER LAND</div>
-                            <div class="rol-row">${rightOverLandHtml(data.rightOverLand)}</div>
+                            <div class="lbl">RIGHT OVER LAND:</div>
+                            <div class="data">${val(data.rightOverLand, false)}</div>
                         </td>
                     </tr>
                     <tr>
@@ -192,8 +180,7 @@ function buildLocationalClearanceHtml(
                     <p>Date Paid: ${escapeHtml(blank(data.datePaid))}</p>
                 </div>
                 <div class="meta right">
-                    <p>Date of Inspection: ${escapeHtml(blank(data.dateOfInspection))}</p>
-                    <p>Date of LC Prepared: ${escapeHtml(blank(data.dateOfLcPrepared))}</p>
+                    <p>Date of Inspection and LC Prepared: ${escapeHtml(blank(data.dateOfInspectionAndLcPrepared))}</p>
                 </div>
             </div>
 
@@ -205,26 +192,37 @@ function buildLocationalClearanceHtml(
 }
 
 const PRINT_STYLES = `
-    @page { size: 8.5in 14in; margin: 0.25in 0.3in 0.15in 0.3in; }
+    @page {
+        size: 8.5in 13in;
+        margin: 0;
+    }
     * { box-sizing: border-box; }
     html, body {
-        height: 100%;
-    }
-    body {
-        margin: 0;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #fff;
         color: #000;
         font-family: Arial, Helvetica, sans-serif;
-        font-size: 11.5pt;
-        line-height: 1.2;
+        font-size: 10.5pt;
+        line-height: 1.18;
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
     }
-    .page {
-        width: 100%;
-        margin: 0 auto;
-        min-height: 13.6in;
-        display: flex;
-        flex-direction: column;
+    .sheet {
+        position: relative;
+        width: 8.5in;
+        height: 13in;
+        padding: 0 0.28in 0.82in;
+        margin: 0;
+        overflow: hidden;
+        page-break-after: always;
+        break-after: page;
+        page-break-inside: avoid;
+        break-inside: avoid;
+    }
+    .sheet:last-child {
+        page-break-after: auto;
+        break-after: auto;
     }
     .band {
         display: block;
@@ -232,24 +230,26 @@ const PRINT_STYLES = `
         max-width: none;
     }
     .header-band {
-        height: 1.15in;
+        width: calc(100% + 0.56in);
+        height: 1.05in;
         object-fit: fill;
         object-position: center top;
-        margin: 0 0 2px;
-        flex: 0 0 auto;
+        margin: 0 -0.28in 2px;
     }
     .footer-wrap {
-        width: 100%;
-        margin-top: auto;
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 8.5in;
+        height: 0.72in;
         overflow: hidden;
         line-height: 0;
-        text-align: left;
         background: #007236;
-        flex: 0 0 auto;
     }
     .footer-band {
         width: 100%;
-        height: 0.78in;
+        height: 0.72in;
         object-fit: cover;
         object-position: left center;
         margin: 0;
@@ -257,125 +257,159 @@ const PRINT_STYLES = `
     }
     .doc-title {
         text-align: center;
-        font-size: 17.5pt;
+        font-size: 16pt;
         font-weight: 700;
-        margin: 2px 0 0;
+        margin: 1px 0 0;
         letter-spacing: 0.01em;
-        flex: 0 0 auto;
     }
-    .received-copy {
+    .copy-label {
         text-align: right;
-        font-size: 11.5pt;
+        font-size: 10.5pt;
         font-weight: 700;
-        margin: 0 2px 4px;
-        flex: 0 0 auto;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        margin: 0 2px 3px;
     }
     table.lc-table {
         width: 100%;
         border-collapse: collapse;
         table-layout: fixed;
-        margin-bottom: 6px;
-        flex: 0 0 auto;
+        margin-bottom: 4px;
     }
     table.lc-table td {
         border: 1px solid #000;
-        padding: 3px 5px 4px;
+        padding: 2px 5px 3px;
         vertical-align: top;
-        font-size: 11.5pt;
+        font-size: 10.5pt;
     }
     .lbl { font-weight: 700; }
     .data {
         font-weight: 700;
         white-space: pre-wrap;
-        min-height: 1.15em;
+        min-height: 1.1em;
     }
     .decision { font-weight: 400; }
-    .rol { margin-right: 10px; white-space: nowrap; }
-    .rol-row { margin-top: 2px; }
-    .conditions { margin: 6px 2px 8px; flex: 0 0 auto; }
+    .conditions { margin: 3px 2px 4px; }
     .conditions-title {
         text-align: center;
         font-weight: 700;
-        font-size: 11.5pt;
-        margin: 0 0 4px;
+        font-size: 10.5pt;
+        margin: 0 0 3px;
     }
     .additional-title {
         font-weight: 700;
-        font-size: 10.5pt;
-        margin: 6px 0 3px;
+        font-size: 10pt;
+        margin: 4px 0 2px;
     }
     .condition {
         display: grid;
         grid-template-columns: 14px 1fr;
         gap: 4px;
-        margin: 0 0 2px;
-        font-size: 10.5pt;
+        margin: 0 0 1px;
+        font-size: 9.5pt;
         font-weight: 400;
         align-items: start;
     }
     .condition .bullet {
-        font-size: 9pt;
-        line-height: 1.35;
+        font-size: 8.5pt;
+        line-height: 1.3;
     }
     .signatures {
         display: grid;
         grid-template-columns: 1fr 1fr;
         column-gap: 28px;
-        margin: 8px 4px 0;
+        margin: 6px 4px 0;
         page-break-inside: avoid;
-        flex: 0 0 auto;
+        break-inside: avoid;
         align-items: start;
     }
     .sig { text-align: center; }
     .authority {
         font-weight: 700;
-        font-size: 10.5pt;
-        margin: 0 0 6px;
+        font-size: 10pt;
+        margin: 0 0 4px;
         text-align: left;
-        min-height: 1.25em;
-        line-height: 1.25em;
+        min-height: 1.2em;
+        line-height: 1.2em;
     }
     .authority-spacer {
         visibility: hidden;
     }
     .sig-label {
         text-align: left;
-        font-size: 11.5pt;
+        font-size: 10.5pt;
         margin: 0;
     }
-    .sig-space { height: 40px; }
+    .sig-space { height: 28px; }
     .officer-name {
         font-weight: 700;
-        font-size: 10.5pt;
+        font-size: 10pt;
         margin: 0;
     }
     .officer-title {
-        font-size: 10.5pt;
+        font-size: 10pt;
         margin: 0;
     }
     .meta-row {
         display: grid;
         grid-template-columns: 1fr 1fr;
         column-gap: 28px;
-        margin: 16px 4px 10px;
-        font-size: 9.5pt;
+        margin: 8px 4px 0;
+        font-size: 9pt;
         page-break-inside: avoid;
-        flex: 0 0 auto;
+        break-inside: avoid;
     }
-    .meta p { margin: 0 0 2px; }
+    .meta p { margin: 0 0 1px; }
     .meta.left { text-align: left; padding-left: 0; }
     .meta.right { text-align: left; }
+    @media screen {
+        html, body {
+            background: #d8d8d8;
+        }
+        .sheet {
+            background: #fff;
+            margin: 12px auto;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.18);
+        }
+    }
     @media print {
-        html, body { height: auto; }
-        body { margin: 0; }
-        .page {
-            max-width: none;
-            min-height: calc(14in - 0.4in);
+        html, body {
+            width: 8.5in;
+            background: #fff;
+        }
+        .sheet {
+            margin: 0;
+            box-shadow: none;
         }
     }
 `
 
-export function printLocationalClearance(data: LocationalClearanceData) {
+function copyWindowTitle(
+    data: LocationalClearanceData,
+    copies: LocationalClearanceCopyVariant[],
+): string {
+    const application = data.applicationNumber
+    if (copies.length === 1) {
+        const label = LOCATIONAL_CLEARANCE_COPY_LABELS[copies[0]]
+        return label
+            ? `Locational Clearance - ${label} - ${application}`
+            : `Locational Clearance - ${application}`
+    }
+
+    return `Locational Clearance - ${application}`
+}
+
+export interface OpenLocationalClearancePrintOptions {
+    copies?: LocationalClearanceCopyVariant[]
+    autoPrint?: boolean
+}
+
+export function openLocationalClearancePrint(
+    data: LocationalClearanceData,
+    options: OpenLocationalClearancePrintOptions = {},
+) {
+    const copies = options.copies?.length ? options.copies : (["cpdo"] as LocationalClearanceCopyVariant[])
+    const autoPrint = options.autoPrint ?? true
     const printWindow = window.open("", "_blank", "width=920,height=780")
     if (!printWindow) {
         return
@@ -383,20 +417,26 @@ export function printLocationalClearance(data: LocationalClearanceData) {
 
     const headerUrl = getLcHeaderUrl()
     const footerUrl = getLcFooterUrl()
-    const body = buildLocationalClearanceHtml(data, headerUrl, footerUrl)
+    const body = copies
+        .map((copy) => buildLocationalClearancePageHtml(data, copy, headerUrl, footerUrl))
+        .join("")
 
     printWindow.document.write(`
         <!DOCTYPE html>
         <html lang="en">
         <head>
             <meta charset="UTF-8" />
-            <title>Locational Clearance - ${escapeHtml(data.applicationNumber)}</title>
+            <title>${escapeHtml(copyWindowTitle(data, copies))}</title>
             <style>${PRINT_STYLES}</style>
         </head>
         <body>
             ${body}
             <script>
                 window.onload = function() {
+                    var autoPrint = ${autoPrint ? "true" : "false"};
+                    if (!autoPrint) {
+                        return;
+                    }
                     var images = Array.prototype.slice.call(document.images || []);
                     var pending = images.filter(function(img) { return !img.complete; }).length;
                     function doPrint() { window.print(); }
@@ -417,4 +457,26 @@ export function printLocationalClearance(data: LocationalClearanceData) {
         </html>
     `)
     printWindow.document.close()
+}
+
+export function viewLocationalClearance(
+    data: LocationalClearanceData,
+    copies: LocationalClearanceCopyVariant[] = ["cpdo", "client"],
+) {
+    openLocationalClearancePrint(data, { copies, autoPrint: false })
+}
+
+export function printLocationalClearanceCopy(
+    data: LocationalClearanceData,
+    copy: LocationalClearanceCopyVariant,
+) {
+    openLocationalClearancePrint(data, { copies: [copy], autoPrint: true })
+}
+
+export function printBothLocationalClearanceCopies(data: LocationalClearanceData) {
+    openLocationalClearancePrint(data, { copies: ["cpdo", "client"], autoPrint: true })
+}
+
+export function printLocationalClearance(data: LocationalClearanceData) {
+    printLocationalClearanceCopy(data, "cpdo")
 }

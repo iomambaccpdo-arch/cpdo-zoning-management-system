@@ -40,10 +40,6 @@ class LocationalClearanceBuilder
     public function build(Document $document): array
     {
         $report = $document->inspectionReport;
-        $projectTypeParts = array_filter([
-            $document->projectType?->name,
-            $document->specificProjectType?->name,
-        ]);
 
         $dateApproved = $report?->submitted_at ?? $document->updated_at;
 
@@ -52,30 +48,29 @@ class LocationalClearanceBuilder
             'decisionNumber' => $this->decisionNumber($document),
             'dateReceived' => $this->formatDate($document->date_of_application),
             'dateApproved' => $this->formatDate($dateApproved),
-            'dateRequirementsComplied' => $this->formatDate($this->requirementsCompliedDate($document)),
+            'dateRequirementsComplied' => $this->formatDate($document->date_requirements_complied),
             'applicantName' => $document->applicant_name,
             'corporationName' => filled($document->corporation_name) ? $document->corporation_name : '',
             'applicantAddress' => $this->formatAddress($document),
             'corporationAddress' => filled($document->corporation_address) ? $document->corporation_address : '',
-            'projectType' => implode(' — ', $projectTypeParts) ?: '—',
+            'projectType' => ProjectTypeClassification::fromReport($document, $report),
             'location' => $this->buildLocation($document, $report),
             'floorArea' => DocumentPropertyDetails::formatFloorAreaForClearance($document),
             'lotArea' => DocumentPropertyDetails::formatLotAreaForClearance($document),
-            'frontageAtMainRoad' => $report?->front_setback ?: '—',
+            'frontageAtMainRoad' => Measurements::formatLength($report?->front_setback, '—'),
             'typeOfLot' => $report?->type_of_lot ?: '—',
-            'standardRoadRightOfWay' => $report?->road_standard_rrow ?: '—',
-            'distanceCenterLineToBuilding' => $report?->distance_center_line_to_building ?: '—',
+            'standardRoadRightOfWay' => Measurements::formatLength($report?->road_standard_rrow, '—'),
+            'distanceCenterLineToBuilding' => Measurements::formatLength($report?->distance_center_line_to_building, '—'),
             'rightOverLand' => $report?->right_over_land ?: '—',
             'decision' => LocationalClearanceConditions::DEFAULT_DECISION,
             'conditions' => implode("\n", LocationalClearanceConditions::CONDITIONS),
             'additionalConditions' => $this->additionalConditions($report),
             'recommendingApprovalOfficer' => $this->recommendingOfficer($report),
             'approvingOfficer' => $this->approvingOfficer($document, $report),
-            'orNumber' => '—',
-            'amountPaid' => '—',
-            'datePaid' => '—',
-            'dateOfInspection' => $this->formatDate($report?->inspection_date),
-            'dateOfLcPrepared' => $this->formatDate($report?->submitted_at ?? now()),
+            'orNumber' => LocationalClearancePayment::formatOrNumber($document->or_number),
+            'amountPaid' => LocationalClearancePayment::formatAmount($document->amount_paid),
+            'datePaid' => $this->formatDate($document->date_paid),
+            'dateOfInspectionAndLcPrepared' => $this->formatDate($this->inspectionAndLcPreparedDate($report)),
             'documentTitle' => $document->document_title,
         ];
     }
@@ -98,7 +93,7 @@ class LocationalClearanceBuilder
     private function buildLocation(Document $document, ?object $report): string
     {
         $location = filled($report?->location_details)
-            ? trim((string) $report->location_details)
+            ? DocumentPropertyDetails::deduplicatePurokPrefix(trim((string) $report->location_details))
             : $this->defaultLocation($document);
 
         $landmark = filled($report?->landmark)
@@ -109,7 +104,7 @@ class LocationalClearanceBuilder
             $location = "{$location} — {$landmark}";
         }
 
-        $coordinates = trim((string) $document->coordinates);
+        $coordinates = GeographicCoordinates::fromReport($document, $report);
 
         if ($coordinates !== '') {
             return "{$coordinates} / {$location}";
@@ -120,20 +115,14 @@ class LocationalClearanceBuilder
 
     private function defaultLocation(Document $document): string
     {
-        $parts = array_filter([
-            $document->purok?->name ? 'Prk. '.$document->purok->name : null,
-            $document->barangay?->name ? 'Brgy. '.$document->barangay->name : null,
-            'Panabo City',
-        ]);
-
-        return implode(', ', $parts) ?: '—';
+        return DocumentPropertyDetails::formatLocationDetails($document) ?: '—';
     }
 
     private function formatAddress(Document $document): string
     {
         $parts = array_filter([
             $document->landmark,
-            $document->purok?->name ? 'Purok '.$document->purok->name : null,
+            DocumentPropertyDetails::formatPurokName($document->purok?->name),
             $document->barangay?->name,
             'Panabo City',
         ]);
@@ -206,14 +195,11 @@ class LocationalClearanceBuilder
         return $name;
     }
 
-    private function requirementsCompliedDate(Document $document): mixed
+    private function inspectionAndLcPreparedDate(?object $report): mixed
     {
-        $latestDocumentAttachment = $document->attachments
-            ->where('attachment_type', 'document')
-            ->sortByDesc('created_at')
-            ->first();
-
-        return $latestDocumentAttachment?->created_at ?? $document->date_of_application;
+        return $report?->inspection_date
+            ?? $report?->submitted_at
+            ?? now();
     }
 
     private function formatDate(mixed $value): string

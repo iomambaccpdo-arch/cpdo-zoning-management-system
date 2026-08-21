@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query"
 import { ClipboardCheck } from "lucide-react"
 import { Button } from "~/components/ui/button"
 import { GenerateLocationalClearanceButton } from "~/components/documents/generate-locational-clearance-button"
+import { LocationalClearancePaymentButton } from "~/components/documents/locational-clearance-payment-button"
 import {
     Dialog,
     DialogContent,
@@ -95,7 +96,10 @@ export function ViewDocumentTable({ attachment, open, onClose }: ViewDocumentTab
                             </Button>
                         )}
                         {fullDocument && (
-                            <GenerateLocationalClearanceButton document={fullDocument} />
+                            <>
+                                <LocationalClearancePaymentButton document={fullDocument} />
+                                <GenerateLocationalClearanceButton document={fullDocument} />
+                            </>
                         )}
                     </div>
                 </div>

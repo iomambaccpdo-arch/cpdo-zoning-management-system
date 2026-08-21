@@ -33,7 +33,9 @@ import {
     isEncoderClerk,
 } from "~/lib/permissions"
 import { GenerateLocationalClearanceButton } from "~/components/documents/generate-locational-clearance-button"
+import { LocationalClearancePaymentButton } from "~/components/documents/locational-clearance-payment-button"
 import { DocumentStatusBadge } from "~/components/documents/document-status-badge"
+import { formatPurokName } from "~/lib/document-property-utils"
 
 // ─── Year helpers ───────────────────────────────────────────────────────────
 const CURRENT_YEAR = new Date().getFullYear()
@@ -203,7 +205,7 @@ function DocumentsTable({
                                 </TableCell>
                                 <TableCell className="max-w-[140px] truncate">
                                     {doc.barangay?.name && doc.purok?.name
-                                        ? `${doc.barangay.name}, Purok ${doc.purok.name}`
+                                        ? `${doc.barangay.name}, ${formatPurokName(doc.purok.name)}`
                                         : "—"}
                                 </TableCell>
                                 <TableCell className="text-right whitespace-nowrap">
@@ -270,6 +272,13 @@ function DocumentsTable({
                                             <ClipboardCheck className="h-4 w-4" />
                                         </Button>
                                     )}
+                                    <LocationalClearancePaymentButton
+                                        document={doc}
+                                        iconOnly
+                                        showLabel={false}
+                                        variant="ghost"
+                                        className="h-7 w-7 p-0 text-indigo-700 hover:bg-indigo-50"
+                                    />
                                     {canGenerateLc && doc.status === "approved" && (
                                         <GenerateLocationalClearanceButton
                                             document={doc}

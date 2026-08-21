@@ -120,11 +120,11 @@ class FrontageRoads
                 'key' => $key,
                 'label' => $labels[$key],
                 'name' => self::nullableString($entry['name'] ?? null),
-                'standard_rrow' => self::nullableString($entry['standardRrow'] ?? $entry['standard_rrow'] ?? null),
-                'actual_rrow' => self::nullableString($entry['actualRrow'] ?? $entry['actual_rrow'] ?? null),
-                'min_setback' => self::nullableString($entry['minSetback'] ?? $entry['min_setback'] ?? null),
-                'as_per_plan' => self::nullableString($entry['asPerPlan'] ?? $entry['as_per_plan'] ?? null),
-                'frontage' => self::nullableString($entry['frontage'] ?? null),
+                'standard_rrow' => Measurements::stripLengthUnit($entry['standardRrow'] ?? $entry['standard_rrow'] ?? null),
+                'actual_rrow' => Measurements::stripLengthUnit($entry['actualRrow'] ?? $entry['actual_rrow'] ?? null),
+                'min_setback' => Measurements::stripLengthUnit($entry['minSetback'] ?? $entry['min_setback'] ?? null),
+                'as_per_plan' => Measurements::stripLengthUnit($entry['asPerPlan'] ?? $entry['as_per_plan'] ?? null),
+                'frontage' => Measurements::stripLengthUnit($entry['frontage'] ?? null),
                 'remarks' => self::nullableString($entry['remarks'] ?? null),
             ];
             $count++;
@@ -161,11 +161,11 @@ class FrontageRoads
     {
         $main = self::emptyRoad('main');
         $main['name'] = self::nullableString($legacy['road_category'] ?? null);
-        $main['standard_rrow'] = self::nullableString($legacy['road_standard_rrow'] ?? null);
-        $main['actual_rrow'] = self::nullableString($legacy['road_actual_rrow'] ?? null);
-        $main['min_setback'] = self::nullableString($legacy['road_min_setback'] ?? null);
-        $main['as_per_plan'] = self::nullableString($legacy['road_as_per_plan'] ?? null);
-        $main['frontage'] = self::nullableString($legacy['front_setback'] ?? null);
+        $main['standard_rrow'] = Measurements::stripLengthUnit($legacy['road_standard_rrow'] ?? null);
+        $main['actual_rrow'] = Measurements::stripLengthUnit($legacy['road_actual_rrow'] ?? null);
+        $main['min_setback'] = Measurements::stripLengthUnit($legacy['road_min_setback'] ?? null);
+        $main['as_per_plan'] = Measurements::stripLengthUnit($legacy['road_as_per_plan'] ?? null);
+        $main['frontage'] = Measurements::stripLengthUnit($legacy['front_setback'] ?? null);
         $main['remarks'] = self::nullableString($legacy['road_remarks'] ?? $legacy['remarks'] ?? null);
 
         return [$main];

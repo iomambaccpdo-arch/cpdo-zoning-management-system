@@ -1,11 +1,18 @@
 import * as React from "react"
 import { format } from "date-fns"
 import type { Document, InspectionReport } from "~/api/DocumentService"
+import { deduplicatePurokPrefix } from "~/lib/document-property-utils"
 import {
     buildInspectionReportPrefill,
+    COORDINATES_VERIFICATION_STATUSES,
+    collectInspectionFindings,
     formatParkingSpaceRequirement,
+    getCoordinatesVerificationStatus,
+    getProjectTypeVerificationStatus,
     normalizeFrontages,
     PROJECT_STATUS_OPTIONS,
+    PROJECT_TYPE_VERIFICATION_STATUSES,
+    resolveVerifiedCoordinates,
     resolvedVerifiedValue,
 } from "~/lib/inspection-report-utils"
 import {
@@ -14,6 +21,7 @@ import {
     getPanaboLogoUrl,
     PANABO_LOGO_PATH,
 } from "~/lib/public-assets"
+import { formatArea, formatLength } from "~/lib/measurement-utils"
 
 interface InspectionReportPrintProps {
     document: Document
@@ -21,7 +29,7 @@ interface InspectionReportPrintProps {
 }
 
 function formatDate(value: string | null | undefined): string {
-    if (!value) return "_________________________"
+    if (!value) return ""
     try {
         return format(new Date(value), "MMMM d, yyyy").toUpperCase()
     } catch {
@@ -34,7 +42,11 @@ function escapeHtml(value: string): string {
 }
 
 function display(value: string | null | undefined): string {
-    return value?.trim() || "_________________________"
+    return value?.trim() || ""
+}
+
+function displayLength(value: string | null | undefined): string {
+    return formatLength(value) || ""
 }
 
 function checkbox(label: string, selected: boolean): string {
@@ -65,6 +77,25 @@ function buildEvaluationReportHtml(
     const significance = report.project_significance ?? ""
     const status = report.project_status_as_of_inspection ?? ""
     const hasBuildingsOrLots = prefill.buildings.length > 0 || prefill.lots.length > 0
+    const verifiedCoordinates = resolveVerifiedCoordinates(
+        document.coordinates,
+        report.field_verifications,
+        report.gps_coordinates,
+    )
+    const coordinatesStatus = getCoordinatesVerificationStatus(
+        document.coordinates,
+        report.field_verifications,
+        report.gps_coordinates,
+    )
+    const projectTypeStatus = getProjectTypeVerificationStatus(
+        prefill.encodedProjectType,
+        report.field_verifications,
+    )
+    const verifiedProjectType = resolvedVerifiedValue(
+        prefill.projectType,
+        report.field_verifications,
+        "project_type",
+    )
 
     const areaRows = hasBuildingsOrLots
         ? [
@@ -75,7 +106,7 @@ function buildEvaluationReportHtml(
                 </tr>`,
                 `<tr>
                     <td class="label">Lot ${index + 1} Area</td>
-                    ${verifiedValueCell(report, `lot_${index}_area`, lot.area ? `${lot.area} sq.m.` : "")}
+                    ${verifiedValueCell(report, `lot_${index}_area`, formatArea(lot.area))}
                 </tr>`,
             ]),
             ...prefill.buildings.flatMap((building, index) => [
@@ -85,7 +116,7 @@ function buildEvaluationReportHtml(
                 </tr>`,
                 `<tr>
                     <td class="label">Building ${index + 1} Area</td>
-                    ${verifiedValueCell(report, `building_${index}_area`, building.area ? `${building.area} sq.m.` : "")}
+                    ${verifiedValueCell(report, `building_${index}_area`, formatArea(building.area))}
                 </tr>`,
             ]),
         ].join("")
@@ -102,6 +133,29 @@ function buildEvaluationReportHtml(
         road_as_per_plan: report.road_as_per_plan,
         front_setback: report.front_setback,
     })
+    const recommendationFindings = Array.isArray(report.recommendation_findings)
+        ? report.recommendation_findings.filter((finding) => finding.trim() !== "")
+        : collectInspectionFindings({
+            projectZoningClassification: resolvedVerifiedValue(
+                prefill.projectClassification,
+                report.field_verifications,
+                "project_classification",
+            ),
+            siteZoningClassification: resolvedVerifiedValue(
+                prefill.siteZoningClassification,
+                report.field_verifications,
+                "site_zoning_classification",
+            ),
+            hasInspectionPhotos: true,
+            frontages,
+            distanceCenterLineToBuilding: report.distance_center_line_to_building,
+            parkingSpaceRequirement: report.parking_space_requirement,
+            parkingAsPerPlan: report.parking_as_per_plan,
+            lackingDocuments: report.lacking_documents,
+            fieldVerifications: report.field_verifications,
+            coordinatesNeedVerification:
+                coordinatesStatus === COORDINATES_VERIFICATION_STATUSES.NOT_YET_VERIFIED,
+        })
 
     return `
         <div class="page">
@@ -151,12 +205,22 @@ function buildEvaluationReportHtml(
                 </tr>
                 <tr>
                     <td class="label">Project Type</td>
-                    ${verifiedValueCell(report, "project_type", prefill.projectType)}
+                    <td class="value" colspan="3">${escapeHtml(display(verifiedProjectType))}</td>
                 </tr>
+                <tr>
+                    <td class="label">Project Type Verification</td>
+                    <td class="value" colspan="3">${escapeHtml(projectTypeStatus)}</td>
+                </tr>
+                ${projectTypeStatus === PROJECT_TYPE_VERIFICATION_STATUSES.VERIFIED_CORRECTED
+                    ? `<tr>
+                    <td class="label">Encoded Project Type</td>
+                    <td class="value" colspan="3">${escapeHtml(display(prefill.projectType))}</td>
+                </tr>`
+                    : ""}
                 ${areaRows}
                 <tr>
                     <td class="label">Project Location — Address</td>
-                    ${verifiedValueCell(report, "location", prefill.locationDetails || report.location_details || "")}
+                    ${verifiedValueCell(report, "location", deduplicatePurokPrefix(prefill.locationDetails || report.location_details || ""))}
                 </tr>
                 <tr>
                     <td class="label">Landmark</td>
@@ -164,8 +228,18 @@ function buildEvaluationReportHtml(
                 </tr>
                 <tr>
                     <td class="label">Geographic Coordinates</td>
-                    <td class="value" colspan="3">${escapeHtml(display(report.gps_coordinates))}</td>
+                    <td class="value" colspan="3">${escapeHtml(display(verifiedCoordinates))}</td>
                 </tr>
+                <tr>
+                    <td class="label">Coordinate Verification</td>
+                    <td class="value" colspan="3">${escapeHtml(coordinatesStatus)}</td>
+                </tr>
+                ${coordinatesStatus === COORDINATES_VERIFICATION_STATUSES.VERIFIED_CORRECTED
+                    ? `<tr>
+                    <td class="label">Encoded Coordinates</td>
+                    <td class="value" colspan="3">${escapeHtml(display(document.coordinates))}</td>
+                </tr>`
+                    : ""}
                 <tr>
                     <td class="label">Project Zoning Classification</td>
                     ${verifiedValueCell(report, "project_classification", prefill.projectClassification)}
@@ -207,10 +281,6 @@ function buildEvaluationReportHtml(
                     </td>
                 </tr>
                 <tr>
-                    <td class="label">Distance from RROW Centerline to Nearest Building</td>
-                    <td class="value" colspan="3">${escapeHtml(display(report.distance_center_line_to_building))}</td>
-                </tr>
-                <tr>
                     <td class="label">Project Lot Type</td>
                     <td class="value">${escapeHtml(display(report.type_of_lot))}</td>
                     <td class="label">Lacking Documents</td>
@@ -222,7 +292,17 @@ function buildEvaluationReportHtml(
                 </tr>` : ""}
             </table>
 
-            <table class="data-table">
+            <table class="data-table rrow-table">
+                <colgroup>
+                    <col class="col-frontage" />
+                    <col class="col-road-name" />
+                    <col class="col-rrow" />
+                    <col class="col-rrow" />
+                    <col class="col-frontage-m" />
+                    <col class="col-setback" />
+                    <col class="col-setback" />
+                    <col class="col-centerline" />
+                </colgroup>
                 <thead>
                     <tr>
                         <th>Frontage</th>
@@ -232,25 +312,31 @@ function buildEvaluationReportHtml(
                         <th>Frontage (m)</th>
                         <th>Setback Min. Requirement</th>
                         <th>Setback As Per Plan</th>
-                        <th>Remarks</th>
+                        <th>Distance from the Centerline of the Road to the Building</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${frontages.map((road) => `
+                    ${frontages.map((road, index) => `
                     <tr>
                         <td>${escapeHtml(display(road.label))}</td>
                         <td>${escapeHtml(display(road.name))}</td>
-                        <td>${escapeHtml(display(road.standardRrow))}</td>
-                        <td>${escapeHtml(display(road.actualRrow))}</td>
-                        <td>${escapeHtml(display(road.frontage))}</td>
-                        <td>${escapeHtml(display(road.minSetback))}</td>
-                        <td>${escapeHtml(display(road.asPerPlan))}</td>
-                        <td>${escapeHtml(display(road.remarks))}</td>
+                        <td>${escapeHtml(displayLength(road.standardRrow))}</td>
+                        <td>${escapeHtml(displayLength(road.actualRrow))}</td>
+                        <td>${escapeHtml(displayLength(road.frontage))}</td>
+                        <td>${escapeHtml(displayLength(road.minSetback))}</td>
+                        <td>${escapeHtml(displayLength(road.asPerPlan))}</td>
+                        ${index === 0 ? `<td rowspan="${frontages.length}">${escapeHtml(displayLength(report.distance_center_line_to_building))}</td>` : ""}
                     </tr>`).join("")}
                 </tbody>
             </table>
 
-            <table class="data-table">
+            <table class="data-table parking-table">
+                <colgroup>
+                    <col />
+                    <col />
+                    <col />
+                    <col />
+                </colgroup>
                 <thead>
                     <tr>
                         <th>PD1096 — Rev. Building Code</th>
@@ -274,6 +360,14 @@ function buildEvaluationReportHtml(
                     <td class="label">Recommendation</td>
                     <td class="value pre" colspan="3">${escapeHtml(display(report.decision_recommended))}</td>
                 </tr>
+                ${recommendationFindings.length > 0 ? `<tr>
+                    <td class="label">Requirements / Findings</td>
+                    <td class="value" colspan="3">
+                        <ul class="findings-list">
+                            ${recommendationFindings.map((finding) => `<li>${escapeHtml(finding)}</li>`).join("")}
+                        </ul>
+                    </td>
+                </tr>` : ""}
             </table>
 
             <div class="signatures">
@@ -345,11 +439,21 @@ const PRINT_STYLES = `
     table.fields { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
     table.fields td { border: 1px solid #000; padding: 4px 6px; vertical-align: top; font-size: 9.5pt; }
     table.fields td.label { width: 22%; font-weight: 700; background: #f3f4f6; }
-    table.fields td.value { white-space: pre-wrap; }
+    table.fields td.value { white-space: pre-wrap; min-height: 1.35em; }
     table.fields td.value.pre { font-family: inherit; }
-    table.data-table { width: 100%; border-collapse: collapse; margin: 8px 0; page-break-inside: auto; }
-    table.data-table th, table.data-table td { border: 1px solid #000; padding: 4px 6px; font-size: 9pt; text-align: left; vertical-align: top; }
+    .findings-list { margin: 0; padding-left: 1.15em; }
+    .findings-list li { margin: 0 0 2px; }
+    table.fields td.value:empty::after,
+    table.data-table tbody td:empty::after { content: "\\00a0"; }
+    table.data-table { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 8px 0; page-break-inside: auto; }
+    table.data-table th, table.data-table td { border: 1px solid #000; padding: 4px 6px; font-size: 9pt; text-align: left; vertical-align: top; word-wrap: break-word; }
     table.data-table th { font-weight: 700; background: #e5e7eb; text-transform: uppercase; }
+    table.data-table.rrow-table .col-frontage { width: 10%; }
+    table.data-table.rrow-table .col-road-name { width: 13%; }
+    table.data-table.rrow-table .col-rrow { width: 11%; }
+    table.data-table.rrow-table .col-frontage-m { width: 10%; }
+    table.data-table.rrow-table .col-setback { width: 14%; }
+    table.data-table.rrow-table .col-centerline { width: 17%; }
     table.data-table thead { display: table-header-group; }
     table.data-table tr { page-break-inside: avoid; break-inside: avoid; }
     .signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 32px; page-break-inside: avoid; }

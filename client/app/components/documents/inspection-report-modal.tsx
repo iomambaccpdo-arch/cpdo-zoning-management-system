@@ -10,6 +10,7 @@ import {
     DocumentService,
     type InspectionReport,
 } from "~/api/DocumentService"
+import { ZoningService, type Zoning } from "~/api/ZoningService"
 import { Button } from "~/components/ui/button"
 import {
     Dialog,
@@ -26,7 +27,7 @@ import {
     FormLabel,
     FormMessage,
 } from "~/components/ui/form"
-import { Input } from "~/components/ui/input"
+import { Input, InputUnitAddon } from "~/components/ui/input"
 import { Checkbox } from "~/components/ui/checkbox"
 import {
     Select,
@@ -47,31 +48,57 @@ import {
 import {
     buildInspectionReportPrefill,
     buildVerifiableFieldKeys,
+    COORDINATES_FIELD_KEY,
+    COORDINATES_VERIFICATION_STATUSES,
     DEFAULT_PARKING_BUILDING_CODE,
     defaultFrontages,
-    determineInspectionRecommendation,
     emptyFieldVerifications,
     emptyFrontageRoad,
     emptyParkingSpaceRequirement,
+    evaluateInspectionRecommendation,
     FRONTAGE_ROAD_OPTIONS,
+    getCoordinatesVerificationStatus,
+    getProjectTypeVerificationStatus,
+    hasCompleteProjectTypeSelection,
+    hydrateCoordinatesVerification,
     nextFrontageRoadLabel,
-    normalizeFieldVerifications,
     normalizeFrontages,
     normalizeParkingSpaceRequirement,
     PARKING_SPACE_VEHICLE_TYPES,
     PROJECT_STATUS_OPTIONS,
+    PROJECT_TYPE_FIELD_KEY,
+    PROJECT_TYPE_SPECIFIC_NA,
+    PROJECT_TYPE_VERIFICATION_STATUSES,
+    projectTypeLabelFromSelection,
+    projectTypeSelectionMatchesEncoded,
+    projectTypesForZoning,
     resolvedVerifiedValue,
     RIGHT_OVER_LAND_OPTIONS,
+    serializeProjectTypeVerification,
+    specificProjectTypesForProjectType,
     STANDARD_RROW_OPTIONS,
     TYPE_OF_LOT_OPTIONS,
+    verifiedCoordinatesForSave,
+    type EncodedProjectType,
     type InspectionReportPrefill,
 } from "~/lib/inspection-report-utils"
+import { displayZoningClassificationName } from "~/lib/zoning-utils"
+import { Badge } from "~/components/ui/badge"
 import { useAuthStore } from "~/store/auth"
-import { canReturnInspectionReport, canReviewInspectionReport } from "~/lib/permissions"
+import { LocationalClearancePaymentSection } from "~/components/documents/locational-clearance-payment-section"
+import {
+    canManageLocationalClearancePayment,
+    canReturnInspectionReport,
+    canReviewInspectionReport,
+} from "~/lib/permissions"
+import { formatArea, LENGTH_UNIT, stripLengthUnit } from "~/lib/measurement-utils"
 
 const fieldVerificationEntrySchema = z.object({
     verified: z.boolean(),
     correction: z.string().max(2000).optional(),
+    zoning_id: z.union([z.string(), z.number()]).nullable().optional(),
+    project_type_id: z.union([z.string(), z.number()]).nullable().optional(),
+    specific_project_type_id: z.union([z.string(), z.number()]).nullable().optional(),
 })
 
 const optionalDecimalString = z
@@ -148,7 +175,7 @@ const submitSchema = z
         fieldVerifications: z.record(z.string(), fieldVerificationEntrySchema).optional(),
         inspectionDate: z.string().min(1, "Date of inspection is required"),
         projectStatusAsOfInspection: z.string().min(1, "Project status is required"),
-        gpsCoordinates: z.string().min(1, "GPS coordinates are required"),
+        gpsCoordinates: z.string().max(255).optional(),
         abuttingNorth: z.string().min(1, "North abutting land use is required"),
         abuttingSouth: z.string().min(1, "South abutting land use is required"),
         abuttingEast: z.string().min(1, "East abutting land use is required"),
@@ -177,6 +204,9 @@ const submitSchema = z
     .superRefine((data, ctx) => {
         const verifications = data.fieldVerifications ?? {}
         for (const [key, entry] of Object.entries(verifications)) {
+            if (key === PROJECT_TYPE_FIELD_KEY) {
+                continue
+            }
             if (!entry.verified && !entry.correction?.trim()) {
                 ctx.addIssue({
                     code: z.ZodIssueCode.custom,
@@ -184,6 +214,15 @@ const submitSchema = z
                     path: ["fieldVerifications", key, "correction"],
                 })
             }
+        }
+
+        const projectType = verifications[PROJECT_TYPE_FIELD_KEY]
+        if (projectType && !projectType.verified && !hasCompleteProjectTypeSelection(projectType)) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Select the verified Zoning, Type of Project, and Specific Project Type",
+                path: ["fieldVerifications", PROJECT_TYPE_FIELD_KEY, "zoning_id"],
+            })
         }
 
         const main = data.frontages?.[0]
@@ -313,6 +352,392 @@ function VerifiableField({
     )
 }
 
+function verificationStatusBadgeClass(status: string): string {
+    if (
+        status === COORDINATES_VERIFICATION_STATUSES.VERIFIED_CORRECTED
+        || status === PROJECT_TYPE_VERIFICATION_STATUSES.VERIFIED_CORRECTED
+    ) {
+        return "border-transparent bg-amber-600 text-white"
+    }
+    if (
+        status === COORDINATES_VERIFICATION_STATUSES.VERIFIED_CORRECT
+        || status === PROJECT_TYPE_VERIFICATION_STATUSES.VERIFIED_CORRECT
+    ) {
+        return "border-transparent bg-emerald-600 text-white"
+    }
+    return "border-transparent bg-slate-500 text-white"
+}
+
+function VerifiableCoordinatesField({
+    encodedCoordinates,
+    disabled,
+    onPickOnMap,
+}: {
+    encodedCoordinates: string
+    disabled: boolean
+    onPickOnMap: () => void
+}) {
+    const { control, setValue } = useFormContext<FormValues>()
+    const verified = useWatch({
+        control,
+        name: `fieldVerifications.${COORDINATES_FIELD_KEY}.verified` as const,
+    })
+    const correction = useWatch({
+        control,
+        name: `fieldVerifications.${COORDINATES_FIELD_KEY}.correction` as const,
+    })
+    const status = getCoordinatesVerificationStatus(
+        encodedCoordinates,
+        {
+            [COORDINATES_FIELD_KEY]: {
+                verified: Boolean(verified),
+                correction: correction ?? "",
+            },
+        },
+    )
+
+    return (
+        <div className="space-y-2 rounded-md border border-zinc-200 bg-white p-3">
+            <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wide">
+                    Encoded Coordinates
+                </p>
+                <Badge
+                    variant="secondary"
+                    className={`text-[11px] font-semibold tracking-wide ${verificationStatusBadgeClass(status)}`}
+                >
+                    {status}
+                </Badge>
+            </div>
+            <p className="text-[13px] text-zinc-800 bg-zinc-50 border border-zinc-200 rounded px-3 py-2 min-h-[38px] whitespace-pre-wrap">
+                {encodedCoordinates || "—"}
+            </p>
+            <FormField
+                control={control}
+                name={`fieldVerifications.${COORDINATES_FIELD_KEY}.verified`}
+                render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2 space-y-0">
+                        <FormControl>
+                            <Checkbox
+                                checked={Boolean(field.value)}
+                                disabled={disabled}
+                                onCheckedChange={(checked) => {
+                                    const isVerified = checked === true
+                                    field.onChange(isVerified)
+                                    if (isVerified) {
+                                        setValue(
+                                            `fieldVerifications.${COORDINATES_FIELD_KEY}.correction`,
+                                            "",
+                                            { shouldDirty: true },
+                                        )
+                                    }
+                                }}
+                            />
+                        </FormControl>
+                        <FormLabel className="text-sm font-normal text-zinc-700">
+                            Coordinates are correct
+                        </FormLabel>
+                    </FormItem>
+                )}
+            />
+            {!verified && (
+                <FormField
+                    control={control}
+                    name={`fieldVerifications.${COORDINATES_FIELD_KEY}.correction`}
+                    render={({ field }) => (
+                        <FormItem>
+                            <FormLabel>Verified / Actual Coordinates</FormLabel>
+                            <div className="flex gap-2">
+                                <FormControl>
+                                    <Input
+                                        disabled={disabled}
+                                        placeholder="Enter the actual coordinates from inspection"
+                                        {...field}
+                                        value={field.value ?? ""}
+                                    />
+                                </FormControl>
+                                {!disabled && (
+                                    <Button type="button" variant="outline" onClick={onPickOnMap}>
+                                        <MapPin className="h-4 w-4 mr-1" />
+                                        Pick on Map
+                                    </Button>
+                                )}
+                            </div>
+                            <FormMessage />
+                        </FormItem>
+                    )}
+                />
+            )}
+        </div>
+    )
+}
+
+function VerifiableProjectTypeField({
+    encoded,
+    zonings,
+    disabled,
+}: {
+    encoded: EncodedProjectType
+    zonings: Zoning[]
+    disabled: boolean
+}) {
+    const { control, setValue, clearErrors } = useFormContext<FormValues>()
+    const verified = useWatch({
+        control,
+        name: `fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.verified` as const,
+    })
+    const zoningId = useWatch({
+        control,
+        name: `fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.zoning_id` as const,
+    })
+    const projectTypeId = useWatch({
+        control,
+        name: `fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.project_type_id` as const,
+    })
+    const specificProjectTypeId = useWatch({
+        control,
+        name: `fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.specific_project_type_id` as const,
+    })
+    const correction = useWatch({
+        control,
+        name: `fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.correction` as const,
+    })
+
+    const projectTypes = projectTypesForZoning(zonings, zoningId)
+    const specificProjectTypes = specificProjectTypesForProjectType(projectTypes, projectTypeId)
+    const status = getProjectTypeVerificationStatus(encoded, {
+        [PROJECT_TYPE_FIELD_KEY]: {
+            verified: Boolean(verified),
+            correction: correction ?? "",
+            zoning_id: zoningId,
+            project_type_id: projectTypeId,
+            specific_project_type_id: specificProjectTypeId,
+        },
+    })
+
+    const applySelection = (
+        nextZoningId: string,
+        nextProjectTypeId: string,
+        nextSpecificId: string,
+    ) => {
+        const nextEntry = {
+            verified: false,
+            correction: "",
+            zoning_id: nextZoningId,
+            project_type_id: nextProjectTypeId,
+            specific_project_type_id: nextSpecificId,
+        }
+        const label = projectTypeLabelFromSelection(
+            zonings,
+            nextZoningId,
+            nextProjectTypeId,
+            nextSpecificId,
+        )
+        const complete = hasCompleteProjectTypeSelection(nextEntry)
+
+        if (complete && projectTypeSelectionMatchesEncoded(encoded, nextEntry)) {
+            setValue(`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.verified`, true, { shouldDirty: true })
+            setValue(`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.correction`, "", { shouldDirty: true })
+            setValue(`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.zoning_id`, "", { shouldDirty: true })
+            setValue(`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.project_type_id`, "", { shouldDirty: true })
+            setValue(`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.specific_project_type_id`, "", { shouldDirty: true })
+            clearErrors(`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.zoning_id`)
+            return
+        }
+
+        setValue(`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.verified`, false, { shouldDirty: true })
+        setValue(`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.zoning_id`, nextZoningId, { shouldDirty: true })
+        setValue(`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.project_type_id`, nextProjectTypeId, { shouldDirty: true })
+        setValue(`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.specific_project_type_id`, nextSpecificId, { shouldDirty: true })
+        setValue(
+            `fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.correction`,
+            complete && label !== "—" ? label : "",
+            { shouldDirty: true },
+        )
+        clearErrors(`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.zoning_id`)
+    }
+
+    return (
+        <div className="space-y-2 rounded-md border border-zinc-200 bg-white p-3 sm:col-span-2">
+            <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wide">
+                    Encoded Project Type
+                </p>
+                <Badge
+                    variant="secondary"
+                    className={`text-[11px] font-semibold tracking-wide ${verificationStatusBadgeClass(status)}`}
+                >
+                    {status}
+                </Badge>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <ReadOnlyField label="Zoning" value={encoded.zoningName} />
+                <ReadOnlyField label="Type of Project" value={encoded.projectTypeName} />
+                <ReadOnlyField label="Specific Project Type" value={encoded.specificProjectTypeName} />
+            </div>
+            <FormField
+                control={control}
+                name={`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.verified`}
+                render={({ field }) => (
+                    <FormItem className="flex flex-row items-center gap-2 space-y-0">
+                        <FormControl>
+                            <Checkbox
+                                checked={Boolean(field.value)}
+                                disabled={disabled}
+                                onCheckedChange={(checked) => {
+                                    const isVerified = checked === true
+                                    field.onChange(isVerified)
+                                    if (isVerified) {
+                                        setValue(`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.correction`, "", { shouldDirty: true })
+                                        setValue(`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.zoning_id`, "", { shouldDirty: true })
+                                        setValue(`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.project_type_id`, "", { shouldDirty: true })
+                                        setValue(`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.specific_project_type_id`, "", { shouldDirty: true })
+                                        clearErrors(`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.zoning_id`)
+                                    }
+                                }}
+                            />
+                        </FormControl>
+                        <FormLabel className="text-sm font-normal text-zinc-700">
+                            Project type is correct
+                        </FormLabel>
+                    </FormItem>
+                )}
+            />
+            {!verified && (
+                <div className="space-y-3">
+                    {disabled && correction && !hasCompleteProjectTypeSelection({
+                        verified: false,
+                        correction: correction ?? "",
+                        zoning_id: zoningId,
+                        project_type_id: projectTypeId,
+                        specific_project_type_id: specificProjectTypeId,
+                    }) ? (
+                        <ReadOnlyField label="Inspector Verified Project Type" value={correction} />
+                    ) : (
+                        <>
+                    <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wide">
+                        Inspector Verified Project Type
+                    </p>
+                    <FormField
+                        control={control}
+                        name={`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.zoning_id`}
+                        render={({ field }) => (
+                            <FormItem>
+                                <FormLabel>Zoning</FormLabel>
+                                <Select
+                                    disabled={disabled}
+                                    onValueChange={(value) => {
+                                        applySelection(value, "", "")
+                                    }}
+                                    value={field.value ? String(field.value) : undefined}
+                                >
+                                    <FormControl>
+                                        <SelectTrigger className="w-full">
+                                            <SelectValue placeholder="Select Zoning" />
+                                        </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                        {zonings.map((zoning) => (
+                                            <SelectItem key={zoning.id} value={zoning.id.toString()}>
+                                                {displayZoningClassificationName(zoning.name, zoning.name)}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <FormMessage />
+                            </FormItem>
+                        )}
+                    />
+                    <FormField
+                        control={control}
+                        name={`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.project_type_id`}
+                        render={({ field }) => (
+                            <FormItem>
+                                <FormLabel>Type of Project</FormLabel>
+                                <Select
+                                    disabled={disabled || !zoningId || projectTypes.length === 0}
+                                    onValueChange={(value) => {
+                                        const selected = projectTypes.find((item) => item.id.toString() === value)
+                                        const nextSpecific = selected?.specific_project_types?.length
+                                            ? ""
+                                            : PROJECT_TYPE_SPECIFIC_NA
+                                        applySelection(String(zoningId ?? ""), value, nextSpecific)
+                                    }}
+                                    value={field.value ? String(field.value) : undefined}
+                                >
+                                    <FormControl>
+                                        <SelectTrigger className="w-full">
+                                            <SelectValue placeholder={
+                                                !zoningId
+                                                    ? "Select Zoning first"
+                                                    : projectTypes.length === 0
+                                                        ? "No projects for this zoning"
+                                                        : "Select Type of Project"
+                                            } />
+                                        </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                        {projectTypes.map((projectType) => (
+                                            <SelectItem key={projectType.id} value={projectType.id.toString()}>
+                                                {projectType.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <FormMessage />
+                            </FormItem>
+                        )}
+                    />
+                    <FormField
+                        control={control}
+                        name={`fieldVerifications.${PROJECT_TYPE_FIELD_KEY}.specific_project_type_id`}
+                        render={({ field }) => (
+                            <FormItem>
+                                <FormLabel>Specific Project Type</FormLabel>
+                                <Select
+                                    disabled={disabled || !projectTypeId}
+                                    onValueChange={(value) => {
+                                        applySelection(String(zoningId ?? ""), String(projectTypeId ?? ""), value)
+                                    }}
+                                    value={field.value ? String(field.value) : undefined}
+                                >
+                                    <FormControl>
+                                        <SelectTrigger className="w-full">
+                                            <SelectValue placeholder={
+                                                !projectTypeId
+                                                    ? "Select Type of Project first"
+                                                    : specificProjectTypes.length === 0
+                                                        ? PROJECT_TYPE_SPECIFIC_NA
+                                                        : "Select Specific Project Type"
+                                            } />
+                                        </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                        {specificProjectTypes.length === 0 ? (
+                                            <SelectItem value={PROJECT_TYPE_SPECIFIC_NA}>
+                                                {PROJECT_TYPE_SPECIFIC_NA}
+                                            </SelectItem>
+                                        ) : (
+                                            specificProjectTypes.map((specific) => (
+                                                <SelectItem key={specific.id} value={specific.id.toString()}>
+                                                    {specific.name}
+                                                </SelectItem>
+                                            ))
+                                        )}
+                                    </SelectContent>
+                                </Select>
+                                <FormMessage />
+                            </FormItem>
+                        )}
+                    />
+                        </>
+                    )}
+                </div>
+            )}
+        </div>
+    )
+}
+
 function reportToFormValues(
     report: InspectionReport,
     prefill: InspectionReportPrefill,
@@ -351,9 +776,11 @@ function reportToFormValues(
         projectSignificance: report.project_significance ?? "",
         rightOverLand: report.right_over_land ?? "",
         landmark: report.landmark ?? "",
-        fieldVerifications: normalizeFieldVerifications(
+        fieldVerifications: hydrateCoordinatesVerification(
             verificationKeys,
             report.field_verifications,
+            prefill.coordinates,
+            report.gps_coordinates,
         ),
         inspectionDate: report.inspection_date ?? "",
         projectStatusAsOfInspection: report.project_status_as_of_inspection ?? "",
@@ -381,7 +808,7 @@ function reportToFormValues(
         parkingRemarks: report.parking_remarks ?? "",
         typeOfLot: report.type_of_lot ?? "",
         lackingDocuments: report.lacking_documents ?? "N/A",
-        distanceCenterLineToBuilding: report.distance_center_line_to_building ?? "",
+        distanceCenterLineToBuilding: stripLengthUnit(report.distance_center_line_to_building),
         decisionRecommended: decision,
         inspectorSignature: report.inspector_signature ?? "",
         inspectorDesignation: report.inspector_designation ?? "",
@@ -401,10 +828,7 @@ function defaultInspectorValues(user: ReturnType<typeof useAuthStore.getState>["
     }
 }
 
-function emptyDefaults(
-    documentData?: { coordinates?: string | null },
-    prefill?: InspectionReportPrefill | null,
-): FormValues {
+function emptyDefaults(prefill?: InspectionReportPrefill | null): FormValues {
     const today = format(new Date(), "yyyy-MM-dd")
     const verificationKeys = prefill ? buildVerifiableFieldKeys(prefill) : []
 
@@ -415,7 +839,7 @@ function emptyDefaults(
         fieldVerifications: emptyFieldVerifications(verificationKeys),
         inspectionDate: today,
         projectStatusAsOfInspection: "",
-        gpsCoordinates: documentData?.coordinates ?? "",
+        gpsCoordinates: "",
         abuttingNorth: "",
         abuttingSouth: "",
         abuttingEast: "",
@@ -462,6 +886,12 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
         enabled: open && !!documentId,
     })
 
+    const { data: zonings = [] } = useQuery({
+        queryKey: ["zonings"],
+        queryFn: () => ZoningService.getZonings(),
+        enabled: open,
+    })
+
     const existingReport = reportData?.report ?? null
     const isSubmitted = existingReport?.status === "submitted"
     const isReadOnly = isSubmitted
@@ -477,6 +907,7 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
             existingReport?.reviewed_report_attachment,
     )
     const showZoningReview = canMarkReviewed || hasZoningReview
+    const canManagePayment = canManageLocationalClearancePayment(user, documentStatus)
 
     const form = useForm<FormValues>({
         resolver: zodResolver(draftSchema),
@@ -517,7 +948,7 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
         }
 
         form.reset({
-            ...emptyDefaults(documentData, prefillData),
+            ...emptyDefaults(prefillData),
             ...defaultInspectorValues(user),
         })
         setReviewValues(defaultZoningOfficerReviewValues())
@@ -674,7 +1105,17 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
             return
         }
 
-        saveMutation.mutate({ values: parsed.data, submit })
+        saveMutation.mutate({
+            values: {
+                ...parsed.data,
+                fieldVerifications: serializeProjectTypeVerification(parsed.data.fieldVerifications),
+                gpsCoordinates: verifiedCoordinatesForSave(
+                    documentData?.coordinates,
+                    parsed.data.fieldVerifications,
+                ),
+            },
+            submit,
+        })
     }
 
     const handlePrint = () => {
@@ -696,14 +1137,14 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
     })
 
     const watchedValues = useWatch({ control: form.control })
-    const autoRecommendation = React.useMemo(() => {
+    const { recommendation: autoRecommendation, findings: autoFindings } = React.useMemo(() => {
         if (!prefill) {
-            return ""
+            return { recommendation: "", findings: [] as string[] }
         }
 
         const verifications = watchedValues.fieldVerifications
 
-        return determineInspectionRecommendation({
+        return evaluateInspectionRecommendation({
             projectZoningClassification: resolvedVerifiedValue(
                 prefill.projectClassification,
                 verifications,
@@ -729,8 +1170,14 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
             parkingAsPerPlan: watchedValues.parkingAsPerPlan,
             typeOfLot: watchedValues.typeOfLot,
             lackingDocuments: watchedValues.lackingDocuments,
+            fieldVerifications: verifications,
+            coordinatesNeedVerification: getCoordinatesVerificationStatus(
+                documentData?.coordinates,
+                verifications,
+                watchedValues.gpsCoordinates,
+            ) === COORDINATES_VERIFICATION_STATUSES.NOT_YET_VERIFIED,
         })
-    }, [prefill, watchedValues, inspectionPhotos.length])
+    }, [prefill, watchedValues, inspectionPhotos.length, documentData?.coordinates])
 
     React.useEffect(() => {
         if (isReadOnly) {
@@ -783,6 +1230,7 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
                         )}
 
                         {!isLoading && documentData && prefill && (
+                            <>
                             <Form {...form}>
                                 <form className="space-y-6">
                                 <section className="space-y-3">
@@ -845,13 +1293,12 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
                                             fieldKey="corporation_address"
                                             disabled={isReadOnly}
                                         />
-                                        <VerifiableField
-                                            label="Project Type"
-                                            value={prefill.projectType}
-                                            fieldKey="project_type"
-                                            disabled={isReadOnly}
-                                        />
                                     </div>
+                                    <VerifiableProjectTypeField
+                                        encoded={prefill.encodedProjectType}
+                                        zonings={zonings}
+                                        disabled={isReadOnly}
+                                    />
                                     <div className="space-y-3">
                                         <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wide">
                                             Project Area
@@ -871,7 +1318,7 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
                                                         />
                                                         <VerifiableField
                                                             label={`Lot ${index + 1} Area`}
-                                                            value={lot.area ? `${lot.area} sq.m.` : "—"}
+                                                            value={formatArea(lot.area, "—")}
                                                             fieldKey={`lot_${index}_area`}
                                                             disabled={isReadOnly}
                                                         />
@@ -890,7 +1337,7 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
                                                         />
                                                         <VerifiableField
                                                             label={`Building ${index + 1} Area`}
-                                                            value={building.area ? `${building.area} sq.m.` : "—"}
+                                                            value={formatArea(building.area, "—")}
                                                             fieldKey={`building_${index}_area`}
                                                             disabled={isReadOnly}
                                                         />
@@ -933,34 +1380,10 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
                                                 </FormItem>
                                             )}
                                         />
-                                        <FormField
-                                            control={form.control}
-                                            name="gpsCoordinates"
-                                            render={({ field }) => (
-                                                <FormItem>
-                                                    <FormLabel>Geographic Coordinates</FormLabel>
-                                                    <div className="flex gap-2">
-                                                        <FormControl>
-                                                            <Input
-                                                                placeholder="lat, lng"
-                                                                disabled={isReadOnly}
-                                                                {...field}
-                                                            />
-                                                        </FormControl>
-                                                        {!isReadOnly && (
-                                                            <Button
-                                                                type="button"
-                                                                variant="outline"
-                                                                onClick={() => setShowMapPicker(true)}
-                                                            >
-                                                                <MapPin className="h-4 w-4 mr-1" />
-                                                                Pick on Map
-                                                            </Button>
-                                                        )}
-                                                    </div>
-                                                    <FormMessage />
-                                                </FormItem>
-                                            )}
+                                        <VerifiableCoordinatesField
+                                            encodedCoordinates={prefill.coordinates}
+                                            disabled={isReadOnly}
+                                            onPickOnMap={() => setShowMapPicker(true)}
                                         />
                                     </div>
                                     <VerifiableField
@@ -1171,29 +1594,6 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
                                             <p className="text-[12px] text-zinc-500">
                                                 Main Road is required. Add 2nd–4th Road only when applicable.
                                             </p>
-                                            <FormField
-                                                control={form.control}
-                                                name="distanceCenterLineToBuilding"
-                                                render={({ field }) => (
-                                                    <FormItem>
-                                                        <FormLabel>
-                                                            Distance from RROW Centerline to Nearest Building
-                                                        </FormLabel>
-                                                        <FormControl>
-                                                            <Input
-                                                                type="number"
-                                                                inputMode="decimal"
-                                                                step="any"
-                                                                min="0"
-                                                                placeholder="e.g. 9.25"
-                                                                disabled={isReadOnly}
-                                                                {...field}
-                                                            />
-                                                        </FormControl>
-                                                        <FormMessage />
-                                                    </FormItem>
-                                                )}
-                                            />
                                             {frontageFields.map((frontageField, index) => {
                                                 const roadLabel = FRONTAGE_ROAD_OPTIONS[index]?.label ?? frontageField.label
 
@@ -1244,24 +1644,26 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
                                                                 render={({ field }) => (
                                                                     <FormItem>
                                                                         <FormLabel>Standard RROW</FormLabel>
-                                                                        <Select
-                                                                            disabled={isReadOnly}
-                                                                            onValueChange={field.onChange}
-                                                                            value={field.value}
-                                                                        >
-                                                                            <FormControl>
-                                                                                <SelectTrigger>
-                                                                                    <SelectValue placeholder="Select standard RROW" />
-                                                                                </SelectTrigger>
-                                                                            </FormControl>
-                                                                            <SelectContent>
-                                                                                {STANDARD_RROW_OPTIONS.map((option) => (
-                                                                                    <SelectItem key={option} value={option}>
-                                                                                        {option}
-                                                                                    </SelectItem>
-                                                                                ))}
-                                                                            </SelectContent>
-                                                                        </Select>
+                                                                        <InputUnitAddon unit={LENGTH_UNIT}>
+                                                                            <Select
+                                                                                disabled={isReadOnly}
+                                                                                onValueChange={field.onChange}
+                                                                                value={stripLengthUnit(field.value) || undefined}
+                                                                            >
+                                                                                <FormControl>
+                                                                                    <SelectTrigger className="w-full">
+                                                                                        <SelectValue placeholder="Select standard RROW" />
+                                                                                    </SelectTrigger>
+                                                                                </FormControl>
+                                                                                <SelectContent>
+                                                                                    {STANDARD_RROW_OPTIONS.map((option) => (
+                                                                                        <SelectItem key={option} value={option}>
+                                                                                            {option}
+                                                                                        </SelectItem>
+                                                                                    ))}
+                                                                                </SelectContent>
+                                                                            </Select>
+                                                                        </InputUnitAddon>
                                                                         <FormMessage />
                                                                     </FormItem>
                                                                 )}
@@ -1272,17 +1674,19 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
                                                                 render={({ field }) => (
                                                                     <FormItem>
                                                                         <FormLabel>Actual RROW</FormLabel>
-                                                                        <FormControl>
-                                                                            <Input
-                                                                                type="number"
-                                                                                inputMode="decimal"
-                                                                                step="any"
-                                                                                min="0"
-                                                                                placeholder="e.g. 6.0"
-                                                                                disabled={isReadOnly}
-                                                                                {...field}
-                                                                            />
-                                                                        </FormControl>
+                                                                        <InputUnitAddon unit={LENGTH_UNIT}>
+                                                                            <FormControl>
+                                                                                <Input
+                                                                                    type="number"
+                                                                                    inputMode="decimal"
+                                                                                    step="any"
+                                                                                    min="0"
+                                                                                    placeholder="e.g. 6.0"
+                                                                                    disabled={isReadOnly}
+                                                                                    {...field}
+                                                                                />
+                                                                            </FormControl>
+                                                                        </InputUnitAddon>
                                                                         <FormMessage />
                                                                     </FormItem>
                                                                 )}
@@ -1292,39 +1696,44 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
                                                                 name={`frontages.${index}.frontage`}
                                                                 render={({ field }) => (
                                                                     <FormItem>
-                                                                        <FormLabel>Frontage (m)</FormLabel>
-                                                                        <FormControl>
-                                                                            <Input
-                                                                                type="number"
-                                                                                inputMode="decimal"
-                                                                                step="any"
-                                                                                min="0"
-                                                                                placeholder="e.g. 12.0"
-                                                                                disabled={isReadOnly}
-                                                                                {...field}
-                                                                            />
-                                                                        </FormControl>
+                                                                        <FormLabel>Frontage</FormLabel>
+                                                                        <InputUnitAddon unit={LENGTH_UNIT}>
+                                                                            <FormControl>
+                                                                                <Input
+                                                                                    type="number"
+                                                                                    inputMode="decimal"
+                                                                                    step="any"
+                                                                                    min="0"
+                                                                                    placeholder="e.g. 12.0"
+                                                                                    disabled={isReadOnly}
+                                                                                    {...field}
+                                                                                />
+                                                                            </FormControl>
+                                                                        </InputUnitAddon>
                                                                         <FormMessage />
                                                                     </FormItem>
                                                                 )}
                                                             />
+                                                            <div className={index === 0 ? "sm:col-span-2 grid grid-cols-1 sm:grid-cols-3 gap-4" : "contents"}>
                                                             <FormField
                                                                 control={form.control}
                                                                 name={`frontages.${index}.minSetback`}
                                                                 render={({ field }) => (
                                                                     <FormItem>
                                                                         <FormLabel>Setback — Minimum Requirement</FormLabel>
-                                                                        <FormControl>
-                                                                            <Input
-                                                                                type="number"
-                                                                                inputMode="decimal"
-                                                                                step="any"
-                                                                                min="0"
-                                                                                placeholder="e.g. 3.0"
-                                                                                disabled={isReadOnly}
-                                                                                {...field}
-                                                                            />
-                                                                        </FormControl>
+                                                                        <InputUnitAddon unit={LENGTH_UNIT}>
+                                                                            <FormControl>
+                                                                                <Input
+                                                                                    type="number"
+                                                                                    inputMode="decimal"
+                                                                                    step="any"
+                                                                                    min="0"
+                                                                                    placeholder="e.g. 3.0"
+                                                                                    disabled={isReadOnly}
+                                                                                    {...field}
+                                                                                />
+                                                                            </FormControl>
+                                                                        </InputUnitAddon>
                                                                         <FormMessage />
                                                                     </FormItem>
                                                                 )}
@@ -1335,21 +1744,51 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
                                                                 render={({ field }) => (
                                                                     <FormItem>
                                                                         <FormLabel>Setback — As Per Plan</FormLabel>
-                                                                        <FormControl>
-                                                                            <Input
-                                                                                type="number"
-                                                                                inputMode="decimal"
-                                                                                step="any"
-                                                                                min="0"
-                                                                                placeholder="e.g. 3.0"
-                                                                                disabled={isReadOnly}
-                                                                                {...field}
-                                                                            />
-                                                                        </FormControl>
+                                                                        <InputUnitAddon unit={LENGTH_UNIT}>
+                                                                            <FormControl>
+                                                                                <Input
+                                                                                    type="number"
+                                                                                    inputMode="decimal"
+                                                                                    step="any"
+                                                                                    min="0"
+                                                                                    placeholder="e.g. 3.0"
+                                                                                    disabled={isReadOnly}
+                                                                                    {...field}
+                                                                                />
+                                                                            </FormControl>
+                                                                        </InputUnitAddon>
                                                                         <FormMessage />
                                                                     </FormItem>
                                                                 )}
                                                             />
+                                                            {index === 0 && (
+                                                                <FormField
+                                                                    control={form.control}
+                                                                    name="distanceCenterLineToBuilding"
+                                                                    render={({ field }) => (
+                                                                        <FormItem>
+                                                                            <FormLabel>
+                                                                                Distance from the Centerline of the Road to the Building
+                                                                            </FormLabel>
+                                                                            <InputUnitAddon unit={LENGTH_UNIT}>
+                                                                                <FormControl>
+                                                                                    <Input
+                                                                                        type="number"
+                                                                                        inputMode="decimal"
+                                                                                        step="any"
+                                                                                        min="0"
+                                                                                        placeholder="e.g. 9.25"
+                                                                                        disabled={isReadOnly}
+                                                                                        {...field}
+                                                                                    />
+                                                                                </FormControl>
+                                                                            </InputUnitAddon>
+                                                                            <FormMessage />
+                                                                        </FormItem>
+                                                                    )}
+                                                                />
+                                                            )}
+                                                            </div>
                                                             <FormField
                                                                 control={form.control}
                                                                 name={`frontages.${index}.remarks`}
@@ -1541,6 +1980,21 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
                                                 label="Automatically determined from inspection findings"
                                                 value={autoRecommendation || "Complete evaluation fields to generate recommendation"}
                                             />
+                                            {autoFindings.length > 0 && (
+                                                <div className="space-y-1">
+                                                    <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wide">
+                                                        Requirements / Findings
+                                                    </p>
+                                                    <ul className="list-disc space-y-1 pl-5 text-[13px] text-zinc-800 bg-zinc-50 border border-zinc-200 rounded px-3 py-2">
+                                                        {autoFindings.map((finding) => (
+                                                            <li key={finding}>{finding}</li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                            )}
+                                            <p className="text-[11px] text-zinc-500">
+                                                Review the generated recommendation and corresponding findings before finalizing this inspection report.
+                                            </p>
                                             <input type="hidden" {...form.register("decisionRecommended")} />
                                         </section>
 
@@ -1621,6 +2075,10 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
                                         )}
                                 </form>
                             </Form>
+                            {canManagePayment && (
+                                <LocationalClearancePaymentSection document={documentData} />
+                            )}
+                            </>
                         )}
                     </div>
 
@@ -1690,8 +2148,23 @@ export function InspectionReportModal({ documentId, open, onClose }: InspectionR
             <MapPickerModal
                 open={showMapPicker}
                 onClose={() => setShowMapPicker(false)}
-                initialCoordinates={form.watch("gpsCoordinates")}
-                onConfirm={(coordinates) => form.setValue("gpsCoordinates", coordinates, { shouldDirty: true })}
+                initialCoordinates={
+                    form.watch(`fieldVerifications.${COORDINATES_FIELD_KEY}.correction`)
+                    || prefill?.coordinates
+                    || ""
+                }
+                onConfirm={(coordinates) => {
+                    form.setValue(
+                        `fieldVerifications.${COORDINATES_FIELD_KEY}.verified`,
+                        false,
+                        { shouldDirty: true },
+                    )
+                    form.setValue(
+                        `fieldVerifications.${COORDINATES_FIELD_KEY}.correction`,
+                        coordinates,
+                        { shouldDirty: true },
+                    )
+                }}
             />
         </>
     )

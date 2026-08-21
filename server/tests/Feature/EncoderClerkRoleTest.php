@@ -141,6 +141,25 @@ it('allows encoders to update only encoding or returned applications they create
     expect($document->fresh()->applicant_name)->toBe('Updated Applicant');
     expect($document->fresh()->status)->toBe('encoding');
 
+    $this->post("/api/documents/{$document->id}", [
+        'documentTitle' => 'LC Building',
+        'zoning' => $document->zoning_id,
+        'zoningApplicationNo' => $document->zoning_application_no,
+        'typeOfProject' => $document->project_type_id,
+        'specificProjectType' => 'N/A',
+        'applicantName' => 'Updated Applicant',
+        'barangay' => $document->barangay_id,
+        'purok' => $document->purok_id,
+        'landmark' => $document->landmark,
+        'coordinates' => '7.304200, 125.687300',
+        'floorArea' => $document->floor_area,
+        'lotArea' => $document->lot_area,
+        'storey' => $document->storey,
+        'saveAsDraft' => '1',
+    ])->assertSuccessful();
+
+    expect($document->fresh()->coordinates)->toBe('7.304200, 125.687300');
+
     $document->update(['status' => 'encoded']);
 
     $this->post("/api/documents/{$document->id}", [
@@ -203,4 +222,35 @@ it('allows coordinators to return applications to the encoder', function () {
         ->assertSuccessful();
 
     expect($document->fresh()->status)->toBe('returned');
+});
+
+it('keeps encoder coordinates read-only after encoding even when the application is returned', function () {
+    $encoder = createEncoderUser();
+    $document = createDocumentForUser($encoder, 'returned');
+    $originalCoordinates = $document->coordinates;
+
+    Sanctum::actingAs($encoder);
+
+    $this->post("/api/documents/{$document->id}", [
+        'documentTitle' => $document->document_title,
+        'zoning' => $document->zoning_id,
+        'zoningApplicationNo' => $document->zoning_application_no,
+        'typeOfProject' => $document->project_type_id,
+        'specificProjectType' => 'N/A',
+        'applicantName' => 'Corrected Applicant',
+        'barangay' => $document->barangay_id,
+        'purok' => $document->purok_id,
+        'landmark' => $document->landmark,
+        'coordinates' => '7.999000, 125.999000',
+        'floorArea' => $document->floor_area,
+        'lotArea' => $document->lot_area,
+        'storey' => $document->storey,
+        'saveAsDraft' => '1',
+    ])->assertSuccessful();
+
+    $document->refresh();
+
+    expect($document->applicant_name)->toBe('Corrected Applicant')
+        ->and($document->coordinates)->toBe($originalCoordinates)
+        ->and($document->coordinates)->toBe('7.123,125.456');
 });

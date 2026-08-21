@@ -43,6 +43,7 @@ class InspectionReport extends Model
         'setback_requirements',
         'parking_space_requirements',
         'decision_recommended',
+        'recommendation_findings',
         'remarks',
         'inspector_signature',
         'inspector_designation',
@@ -71,6 +72,7 @@ class InspectionReport extends Model
             'frontages' => 'array',
             'parking_space_requirement' => 'array',
             'parking_as_per_plan' => 'array',
+            'recommendation_findings' => 'array',
         ];
     }
 

@@ -134,6 +134,21 @@ export function canGenerateLocationalClearance(user: User | null | undefined): b
     )
 }
 
+export function canManageLocationalClearancePayment(
+    user: User | null | undefined,
+    status?: string,
+): boolean {
+    if (isEncoderClerk(user)) {
+        return false
+    }
+
+    if (!canGenerateLocationalClearance(user) && !canReviewInspectionReport(user)) {
+        return false
+    }
+
+    return status === "inspected" || status === "reviewed" || status === "approved"
+}
+
 export function canViewInspectionReport(user: User | null | undefined): boolean {
     return canManageInspectionReport(user) || canReviewInspectionReport(user)
 }

@@ -38,6 +38,7 @@ import {
     canApproveApplication,
     canEditDocument,
     canExtendDueDate,
+    canManageLocationalClearancePayment,
     canReturnToEncoder,
     canReviewInspectionReport,
     canViewInspectionReport,
@@ -48,6 +49,7 @@ import { DueDateExtensionHistory } from "~/components/documents/due-date-extensi
 import { InspectionReportModal } from "~/components/documents/inspection-report-modal"
 import { GenerateLocationalClearanceButton } from "~/components/documents/generate-locational-clearance-button"
 import { DocumentStatusBadge } from "~/components/documents/document-status-badge"
+import { LocationalClearancePaymentSection } from "~/components/documents/locational-clearance-payment-section"
 
 interface ManageAttachmentsModalProps {
     documentId: number | null
@@ -240,6 +242,7 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
             a.attachment_type !== "reviewed_inspection_report"
     ) ?? []
     const canUploadAttachments = canEditDocument(user, document?.status)
+    const canManagePayment = canManageLocationalClearancePayment(user, document?.status)
 
     return (
         <>
@@ -414,6 +417,15 @@ export function ManageAttachmentsModal({ documentId, open, onClose }: ManageAtta
                                 <ClipboardCheck className="h-4 w-4 mr-1" />
                                 Inspection Report
                             </Button>
+                        </div>
+                    )}
+
+                    {canManagePayment && document && (
+                        <div className="py-3 border-t">
+                            <LocationalClearancePaymentSection
+                                document={document}
+                                disabled={isMutating}
+                            />
                         </div>
                     )}
 

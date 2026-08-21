@@ -50,6 +50,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Locational Clearance
     Route::get('documents/{document}/locational-clearance', [\App\Http\Controllers\LocationalClearanceController::class, 'show'])->middleware('permission:files,generate_locational_clearance');
+    Route::put('documents/{document}/locational-clearance/payment', [\App\Http\Controllers\LocationalClearanceController::class, 'updatePaymentDetails'])->middleware('permission:files,generate_locational_clearance');
     Route::post('documents/{document}/locational-clearance/generate', [\App\Http\Controllers\LocationalClearanceController::class, 'generate'])->middleware('permission:files,generate_locational_clearance');
 
     // File Attachments

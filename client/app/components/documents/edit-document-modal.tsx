@@ -199,6 +199,7 @@ export function EditDocumentModal({ documentId, open, onClose }: EditDocumentMod
 
     const selectedZoning = zonings?.find((zoning) => zoning.id.toString() === selectedZoningId)
     const selectedBarangay = barangays?.find((barangay) => barangay.id.toString() === form.watch("barangay"))
+    const coordinatesLocked = document?.status !== "encoding"
 
     const updateMutation = useMutation({
         mutationFn: async ({
@@ -587,8 +588,21 @@ export function EditDocumentModal({ documentId, open, onClose }: EditDocumentMod
                                     name="coordinates"
                                     render={({ field }) => (
                                         <FormItem>
-                                            <FormLabel>Coordinates</FormLabel>
-                                            <FormControl><Input {...field} value={field.value ?? ""} /></FormControl>
+                                            <FormLabel>Encoded Coordinates</FormLabel>
+                                            <FormControl>
+                                                <Input
+                                                    {...field}
+                                                    value={field.value ?? ""}
+                                                    readOnly={coordinatesLocked}
+                                                    disabled={coordinatesLocked}
+                                                    className={coordinatesLocked ? "bg-zinc-50" : undefined}
+                                                />
+                                            </FormControl>
+                                            {coordinatesLocked && (
+                                                <p className="text-[11px] text-muted-foreground">
+                                                    Encoder coordinates are read-only after encoding. The inspector verifies or corrects them during inspection.
+                                                </p>
+                                            )}
                                             <FormMessage />
                                         </FormItem>
                                     )}

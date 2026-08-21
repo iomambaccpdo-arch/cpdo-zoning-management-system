@@ -33,6 +33,10 @@ class Document extends Model
         'storey',
         'mezanine',
         'status',
+        'or_number',
+        'amount_paid',
+        'date_paid',
+        'date_requirements_complied',
     ];
 
     /**
@@ -43,6 +47,10 @@ class Document extends Model
         return [
             'buildings' => 'array',
             'lots' => 'array',
+            'amount_paid' => 'decimal:2',
+            'date_paid' => 'date',
+            'date_requirements_complied' => 'date',
+            'locational_clearance_generated_at' => 'datetime',
         ];
     }
 

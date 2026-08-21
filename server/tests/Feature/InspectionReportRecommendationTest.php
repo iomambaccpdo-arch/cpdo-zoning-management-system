@@ -147,7 +147,11 @@ it('auto-assigns non-compliant recommendation when evaluation is incomplete', fu
 
     $response->assertCreated();
     expect($response->json('report.decision_recommended'))
-        ->toBe(InspectionRecommendation::NON_COMPLIANT);
+        ->toBe(InspectionRecommendation::NON_COMPLIANT)
+        ->and($response->json('report.recommendation_findings'))
+        ->toContain(InspectionRecommendation::FINDING_INSPECTION_PHOTOS_REQUIRED)
+        ->and($response->json('report.recommendation_findings'))
+        ->toContain(InspectionRecommendation::FINDING_GEOGRAPHIC_COORDINATES_NEED_VERIFICATION);
 });
 
 it('auto-assigns non-conforming when site zoning correction differs from project zoning', function () {
@@ -201,6 +205,7 @@ it('auto-assigns approved when a complete conforming evaluation has photos', fun
                 'project_type' => ['verified' => true, 'correction' => ''],
                 'location' => ['verified' => true, 'correction' => ''],
                 'area_details' => ['verified' => true, 'correction' => ''],
+                'coordinates' => ['verified' => true, 'correction' => ''],
             ],
             'submit' => true,
         ])
@@ -209,6 +214,7 @@ it('auto-assigns approved when a complete conforming evaluation has photos', fun
     $response->assertOk();
     expect($response->json('report.decision_recommended'))
         ->toBe(InspectionRecommendation::APPROVED)
+        ->and($response->json('report.recommendation_findings'))->toBe([])
         ->and($response->json('report.lacking_documents'))->toBe('N/A')
         ->and($response->json('report.parking_as_per_plan.car'))->toBe('2');
 });
@@ -228,5 +234,44 @@ it('auto-assigns non-compliant for lacking documents other than N/A', function (
 
     $response->assertCreated();
     expect($response->json('report.decision_recommended'))
-        ->toBe(InspectionRecommendation::NON_COMPLIANT);
+        ->toBe(InspectionRecommendation::NON_COMPLIANT)
+        ->and($response->json('report.recommendation_findings'))
+        ->toContain('Deed of Sale');
+});
+
+it('persists individual requirement findings for setback and lacking documents', function () {
+    $inspector = recommendationTestInspector();
+    $document = recommendationTestDocument($inspector);
+
+    Sanctum::actingAs($inspector);
+
+    $response = $this->postJson(
+        "/api/documents/{$document->id}/inspection-report",
+        completeRecommendationPayload([
+            'frontages' => [[
+                'name' => 'Coastal Road',
+                'standardRrow' => '20 Meters',
+                'actualRrow' => '20',
+                'minSetback' => '5',
+                'asPerPlan' => '3',
+                'frontage' => '25',
+            ]],
+            'lackingDocuments' => 'Barangay Clearance, Site Plan',
+            'fieldVerifications' => [
+                'coordinates' => ['verified' => true, 'correction' => ''],
+            ],
+        ])
+    );
+
+    $response->assertCreated();
+    expect($response->json('report.decision_recommended'))
+        ->toBe(InspectionRecommendation::NON_COMPLIANT)
+        ->and($response->json('report.recommendation_findings'))
+        ->toContain(InspectionRecommendation::FINDING_SETBACK_DOES_NOT_COMPLY)
+        ->and($response->json('report.recommendation_findings'))
+        ->toContain(InspectionRecommendation::FINDING_MISSING_BARANGAY_CLEARANCE)
+        ->and($response->json('report.recommendation_findings'))
+        ->toContain(InspectionRecommendation::FINDING_CORRECTED_SITE_PLAN_REQUIRED)
+        ->and($response->json('report.recommendation_findings'))
+        ->not->toContain(InspectionRecommendation::FINDING_GEOGRAPHIC_COORDINATES_NEED_VERIFICATION);
 });

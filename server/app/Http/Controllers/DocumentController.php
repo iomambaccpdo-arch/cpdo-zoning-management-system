@@ -11,6 +11,7 @@ use App\Support\ActivityLogger;
 use App\Support\DocumentAuthorization;
 use App\Support\DocumentPropertyDetails;
 use App\Support\DocumentStatus;
+use App\Support\GeographicCoordinates;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -451,7 +452,9 @@ class DocumentController extends Controller
                 'barangay_id' => $validatedData['barangay'],
                 'purok_id' => $validatedData['purok'],
                 'landmark' => $validatedData['landmark'],
-                'coordinates' => $validatedData['coordinates'] ?? null,
+                'coordinates' => GeographicCoordinates::encoderCoordinatesLocked($document)
+                    ? $document->coordinates
+                    : ($validatedData['coordinates'] ?? $document->coordinates),
                 'buildings' => $propertyDetails['buildings'],
                 'lots' => $propertyDetails['lots'],
                 'floor_area' => $propertyDetails['floor_area'],

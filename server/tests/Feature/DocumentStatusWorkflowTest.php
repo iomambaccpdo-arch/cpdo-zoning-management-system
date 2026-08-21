@@ -286,7 +286,17 @@ it('allows a zoning officer to generate a locational clearance for an approved a
 
     $this->postJson("/api/documents/{$document->id}/locational-clearance/generate")
         ->assertSuccessful()
+        ->assertJsonPath('generated', true)
         ->assertJsonPath('data.applicationNumber', $document->zoning_application_no)
         ->assertJsonPath('data.recommendingApprovalOfficer', 'Maria Zoning, Zoning Officer III')
-        ->assertJsonPath('data.approvingOfficer', 'Pedro Coordinator, CPDC');
+        ->assertJsonPath('data.approvingOfficer', 'Pedro Coordinator, CPDC')
+        ->assertJsonPath('data.dateOfInspectionAndLcPrepared', now()->format('F j, Y'))
+        ->assertJsonPath('data.orNumber', '—')
+        ->assertJsonPath('data.amountPaid', '—')
+        ->assertJsonPath('data.datePaid', '—')
+        ->assertJsonPath('data.dateRequirementsComplied', '—')
+        ->assertJsonMissingPath('data.dateOfInspection')
+        ->assertJsonMissingPath('data.dateOfLcPrepared');
+
+    expect($document->fresh()->locational_clearance_generated_at)->not->toBeNull();
 });

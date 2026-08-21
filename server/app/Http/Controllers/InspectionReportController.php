@@ -11,9 +11,12 @@ use App\Support\DocumentAuthorization;
 use App\Support\DocumentPropertyDetails;
 use App\Support\DocumentStatus;
 use App\Support\FrontageRoads;
+use App\Support\GeographicCoordinates;
 use App\Support\InspectionRecommendation;
+use App\Support\Measurements;
 use App\Support\ParkingSpaceRequirement;
 use App\Support\ProjectStatus;
+use App\Support\ProjectTypeClassification;
 use App\Support\RightOverLand;
 use App\Support\TypeOfLot;
 use App\Support\ZoningClassification;
@@ -23,6 +26,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class InspectionReportController extends Controller
 {
@@ -76,7 +80,7 @@ class InspectionReportController extends Controller
         }
 
         $submit = $request->boolean('submit');
-        $validated = $this->validateReport($request, $submit);
+        $validated = $this->validateReport($request, $document, $submit);
 
         try {
             DB::beginTransaction();
@@ -136,7 +140,7 @@ class InspectionReportController extends Controller
         }
 
         $submit = $request->boolean('submit');
-        $validated = $this->validateReport($request, $submit);
+        $validated = $this->validateReport($request, $document, $submit);
 
         try {
             DB::beginTransaction();
@@ -527,7 +531,7 @@ class InspectionReportController extends Controller
     /**
      * @return array<string, mixed>
      */
-    private function validateReport(Request $request, bool $submit): array
+    private function validateReport(Request $request, Document $document, bool $submit): array
     {
         $rules = [
             'projectSignificance' => $submit ? 'required|string|max:255' : 'nullable|string|max:255',
@@ -542,6 +546,9 @@ class InspectionReportController extends Controller
             'fieldVerifications.*' => 'array',
             'fieldVerifications.*.verified' => 'required|boolean',
             'fieldVerifications.*.correction' => 'nullable|string|max:2000',
+            'fieldVerifications.*.zoning_id' => 'nullable|integer|exists:zonings,id',
+            'fieldVerifications.*.project_type_id' => 'nullable|integer|exists:project_types,id',
+            'fieldVerifications.*.specific_project_type_id' => 'nullable|integer|exists:specific_project_types,id',
             'inspectionDate' => $submit ? 'required|date' : 'nullable|date',
             'projectStatusAsOfInspection' => [
                 $submit ? 'required' : 'nullable',
@@ -549,7 +556,7 @@ class InspectionReportController extends Controller
                 'max:255',
                 Rule::in(ProjectStatus::options()),
             ],
-            'gpsCoordinates' => $submit ? 'required|string|max:255' : 'nullable|string|max:255',
+            'gpsCoordinates' => 'nullable|string|max:255',
             'abuttingNorth' => $submit ? 'required|string|max:255' : 'nullable|string|max:255',
             'abuttingSouth' => $submit ? 'required|string|max:255' : 'nullable|string|max:255',
             'abuttingEast' => $submit ? 'required|string|max:255' : 'nullable|string|max:255',
@@ -626,14 +633,58 @@ class InspectionReportController extends Controller
             'notedByDesignation' => 'nullable|string|max:255',
         ];
 
-        return $request->validate($rules);
+        $this->prepareProjectTypeVerification($request);
+
+        $validated = $request->validate($rules);
+
+        if ($submit) {
+            $this->assertCoordinatesVerified($validated);
+            ProjectTypeClassification::assertVerifiedForSubmit($document, $validated);
+        }
+
+        return $validated;
+    }
+
+    private function prepareProjectTypeVerification(Request $request): void
+    {
+        $verifications = $request->input('fieldVerifications');
+
+        if (! is_array($verifications) || ! isset($verifications[ProjectTypeClassification::FIELD_KEY]) || ! is_array($verifications[ProjectTypeClassification::FIELD_KEY])) {
+            return;
+        }
+
+        $specific = $verifications[ProjectTypeClassification::FIELD_KEY]['specific_project_type_id'] ?? null;
+
+        if ($specific === ProjectTypeClassification::SPECIFIC_NOT_APPLICABLE || $specific === '') {
+            $verifications[ProjectTypeClassification::FIELD_KEY]['specific_project_type_id'] = null;
+            $request->merge(['fieldVerifications' => $verifications]);
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $validated
+     */
+    private function assertCoordinatesVerified(array $validated): void
+    {
+        $entry = $validated['fieldVerifications'][GeographicCoordinates::FIELD_KEY] ?? null;
+        $verified = is_array($entry) && ($entry['verified'] ?? false) === true;
+        $correction = is_array($entry) ? trim((string) ($entry['correction'] ?? '')) : '';
+        $gps = trim((string) ($validated['gpsCoordinates'] ?? ''));
+
+        if ($verified || $correction !== '' || $gps !== '') {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'fieldVerifications.coordinates.correction' => 'Verify the encoded coordinates or enter the actual coordinates obtained during inspection.',
+        ]);
     }
 
     /**
      * @param  array<string, mixed>|null  $verifications
-     * @return array<string, array{verified: bool, correction: string|null}>
+     * @return array<string, array<string, mixed>>
      */
-    private function normalizeFieldVerifications(?array $verifications): array
+    private function normalizeFieldVerifications(?array $verifications, Document $document): array
     {
         if ($verifications === null) {
             return [];
@@ -643,6 +694,12 @@ class InspectionReportController extends Controller
 
         foreach ($verifications as $key => $entry) {
             if (! is_string($key) || ! is_array($entry)) {
+                continue;
+            }
+
+            if ($key === ProjectTypeClassification::FIELD_KEY) {
+                $normalized[$key] = ProjectTypeClassification::normalizeEntry($document, $entry);
+
                 continue;
             }
 
@@ -664,7 +721,7 @@ class InspectionReportController extends Controller
      */
     private function mapPayload(array $validated, Document $document): array
     {
-        $document->loadMissing(['zoning', 'projectType', 'barangay', 'purok']);
+        $document->loadMissing(['zoning', 'projectType', 'specificProjectType', 'barangay', 'purok']);
 
         $frontages = array_key_exists('frontages', $validated)
             ? FrontageRoads::normalize($validated['frontages'] ?? null)
@@ -688,7 +745,8 @@ class InspectionReportController extends Controller
         );
 
         $fieldVerifications = $this->normalizeFieldVerifications(
-            $validated['fieldVerifications'] ?? null
+            $validated['fieldVerifications'] ?? null,
+            $document,
         );
 
         $projectZoning = $this->resolvedClassification(
@@ -703,7 +761,7 @@ class InspectionReportController extends Controller
         $existingReport = $document->inspectionReport()->first();
         $hasPhotos = $existingReport !== null && $existingReport->photos()->exists();
 
-        $decisionRecommended = InspectionRecommendation::determine([
+        $evaluation = InspectionRecommendation::evaluate([
             'project_zoning_classification' => $projectZoning,
             'site_zoning_classification' => $siteZoning,
             'project_significance' => $validated['projectSignificance'] ?? null,
@@ -716,12 +774,20 @@ class InspectionReportController extends Controller
             'abutting_south' => $validated['abuttingSouth'] ?? null,
             'abutting_west' => $validated['abuttingWest'] ?? null,
             'frontages' => $frontages,
-            'distance_center_line_to_building' => $validated['distanceCenterLineToBuilding'] ?? null,
+            'distance_center_line_to_building' => Measurements::stripLengthUnit($validated['distanceCenterLineToBuilding'] ?? null),
             'parking_space_requirement' => $parkingSpaceRequirement,
             'parking_as_per_plan' => $parkingAsPerPlan,
             'type_of_lot' => $validated['typeOfLot'] ?? null,
             'lacking_documents' => $validated['lackingDocuments'] ?? null,
+            'field_verifications' => $fieldVerifications,
+            'coordinates_need_verification' => GeographicCoordinates::status(
+                $document->coordinates,
+                $fieldVerifications,
+                $validated['gpsCoordinates'] ?? null,
+            ) === GeographicCoordinates::STATUS_NOT_YET_VERIFIED,
         ]);
+        $decisionRecommended = $evaluation['recommendation'];
+        $recommendationFindings = $evaluation['findings'];
 
         return [
             'project_significance' => $validated['projectSignificance'] ?? null,
@@ -734,7 +800,11 @@ class InspectionReportController extends Controller
                 ? Carbon::parse($validated['inspectionDate'])->format('Y-m-d')
                 : null,
             'project_status_as_of_inspection' => $validated['projectStatusAsOfInspection'] ?? null,
-            'gps_coordinates' => $validated['gpsCoordinates'] ?? null,
+            'gps_coordinates' => GeographicCoordinates::verifiedOrNull(
+                $document->coordinates,
+                $fieldVerifications,
+                $validated['gpsCoordinates'] ?? null,
+            ),
             'abutting_north' => $validated['abuttingNorth'] ?? null,
             'abutting_south' => $validated['abuttingSouth'] ?? null,
             'abutting_east' => $validated['abuttingEast'] ?? null,
@@ -748,8 +818,9 @@ class InspectionReportController extends Controller
             'parking_remarks' => $validated['parkingRemarks'] ?? null,
             'type_of_lot' => $validated['typeOfLot'] ?? null,
             'lacking_documents' => $validated['lackingDocuments'] ?? null,
-            'distance_center_line_to_building' => $validated['distanceCenterLineToBuilding'] ?? null,
+            'distance_center_line_to_building' => Measurements::stripLengthUnit($validated['distanceCenterLineToBuilding'] ?? null),
             'decision_recommended' => $decisionRecommended,
+            'recommendation_findings' => $recommendationFindings,
             'inspector_signature' => $validated['inspectorSignature'] ?? null,
             'inspector_designation' => $validated['inspectorDesignation'] ?? null,
             'noted_by_signature' => $validated['notedBySignature'] ?? null,

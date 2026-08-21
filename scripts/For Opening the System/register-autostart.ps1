@@ -2,7 +2,7 @@
 # Creates a Startup shortcut so both servers start when this user logs into Windows.
 
 $ErrorActionPreference = "Stop"
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $BatPath = Join-Path $ScriptDir "start-cpdo-system.bat"
 
 if (-not (Test-Path -LiteralPath $BatPath)) {

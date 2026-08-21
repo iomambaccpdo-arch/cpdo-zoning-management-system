@@ -9,7 +9,14 @@ import {
     DialogTitle,
 } from "~/components/ui/dialog"
 import type { Document } from "~/api/DocumentService"
+import { formatArea } from "~/lib/measurement-utils"
 import { formatZoningClassificationName } from "~/lib/zoning-utils"
+import {
+    COORDINATES_VERIFICATION_STATUSES,
+    getCoordinatesVerificationStatus,
+    resolveVerifiedCoordinates,
+} from "~/lib/inspection-report-utils"
+import { Badge } from "~/components/ui/badge"
 
 interface DocumentPreviewModalProps {
     document: Document | null
@@ -28,6 +35,28 @@ function Field({ label, value }: { label: string; value?: string | null }) {
 
 export function DocumentPreviewModal({ document, open, onClose }: DocumentPreviewModalProps) {
     if (!document) return null
+
+    const report = document.inspection_report
+    const coordinatesStatus = report
+        ? getCoordinatesVerificationStatus(
+            document.coordinates,
+            report.field_verifications,
+            report.gps_coordinates,
+        )
+        : null
+    const verifiedCoordinates = report
+        ? resolveVerifiedCoordinates(
+            document.coordinates,
+            report.field_verifications,
+            report.gps_coordinates,
+        )
+        : null
+    const coordinatesStatusClass =
+        coordinatesStatus === COORDINATES_VERIFICATION_STATUSES.VERIFIED_CORRECT
+            ? "border-transparent bg-emerald-600 text-white"
+            : coordinatesStatus === COORDINATES_VERIFICATION_STATUSES.VERIFIED_CORRECTED
+                ? "border-transparent bg-amber-600 text-white"
+                : "border-transparent bg-slate-500 text-white"
 
     return (
         <Dialog open={open} onOpenChange={onClose}>
@@ -85,7 +114,26 @@ export function DocumentPreviewModal({ document, open, onClose }: DocumentPrevie
                             <Field label="Barangay" value={document.barangay?.name} />
                             <Field label="Purok" value={document.purok?.name} />
                             <Field label="Landmark" value={document.landmark} />
-                            <Field label="Coordinates" value={document.coordinates} />
+                            <Field label="Encoded Coordinates" value={document.coordinates} />
+                            {report && (
+                                <>
+                                    <Field
+                                        label="Verified / Actual Coordinates"
+                                        value={verifiedCoordinates || null}
+                                    />
+                                    <div>
+                                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                            Coordinate Verification
+                                        </p>
+                                        <Badge
+                                            variant="secondary"
+                                            className={`mt-1 text-[11px] font-semibold tracking-wide ${coordinatesStatusClass}`}
+                                        >
+                                            {coordinatesStatus}
+                                        </Badge>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     </section>
 
@@ -101,7 +149,7 @@ export function DocumentPreviewModal({ document, open, onClose }: DocumentPrevie
                                             <Field label={`Building ${index + 1} Name`} value={building.name} />
                                             <Field
                                                 label={`Building ${index + 1} Area`}
-                                                value={building.area ? `${building.area} sqm` : null}
+                                                value={formatArea(building.area) || null}
                                             />
                                         </div>
                                     ))}
@@ -115,7 +163,7 @@ export function DocumentPreviewModal({ document, open, onClose }: DocumentPrevie
                                             <Field label={`Lot ${index + 1} Land Title / TCT`} value={lot.land_title} />
                                             <Field
                                                 label={`Lot ${index + 1} Area`}
-                                                value={lot.area ? `${lot.area} sqm` : null}
+                                                value={formatArea(lot.area) || null}
                                             />
                                         </div>
                                     ))}
@@ -123,14 +171,44 @@ export function DocumentPreviewModal({ document, open, onClose }: DocumentPrevie
                             )}
                             {!(document.buildings?.length || document.lots?.length) && (
                                 <div className="grid grid-cols-2 gap-4">
-                                    <Field label="Floor Area" value={document.floor_area ? `${document.floor_area} sqm` : null} />
-                                    <Field label="Lot Area" value={document.lot_area ? `${document.lot_area} sqm` : null} />
+                                    <Field label="Floor Area" value={formatArea(document.floor_area) || null} />
+                                    <Field label="Lot Area" value={formatArea(document.lot_area) || null} />
                                 </div>
                             )}
                             <div className="grid grid-cols-2 gap-4">
                                 <Field label="Storey" value={document.storey} />
                                 <Field label="Mezzanine" value={document.mezanine} />
                             </div>
+                        </div>
+                    </section>
+
+                    <section>
+                        <h3 className="text-sm font-semibold mb-3 text-indigo-700">Locational Clearance Payment</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                            <Field label="OR No." value={document.or_number} />
+                            <Field
+                                label="Amount Paid"
+                                value={
+                                    document.amount_paid === null || document.amount_paid === undefined || document.amount_paid === ""
+                                        ? null
+                                        : `₱${Number(document.amount_paid).toLocaleString("en-PH", {
+                                              minimumFractionDigits: 2,
+                                              maximumFractionDigits: 2,
+                                          })}`
+                                }
+                            />
+                            <Field
+                                label="Date Paid"
+                                value={document.date_paid ? format(new Date(document.date_paid), "MMMM d, yyyy") : null}
+                            />
+                            <Field
+                                label="Date Complete Requirements Complied"
+                                value={
+                                    document.date_requirements_complied
+                                        ? format(new Date(document.date_requirements_complied), "MMMM d, yyyy")
+                                        : null
+                                }
+                            />
                         </div>
                     </section>
 

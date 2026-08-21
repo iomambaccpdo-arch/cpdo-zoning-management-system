@@ -59,6 +59,9 @@ export interface DueDateExtension {
 export interface FieldVerificationEntry {
   verified: boolean;
   correction: string;
+  zoning_id?: number | string | null;
+  project_type_id?: number | string | null;
+  specific_project_type_id?: number | string | null;
 }
 
 export interface FrontageRoad {
@@ -116,6 +119,7 @@ export interface InspectionReport {
   front_setback: string | null;
   distance_center_line_to_building: string | null;
   decision_recommended: string | null;
+  recommendation_findings: string[] | null;
   inspector_signature: string | null;
   inspector_designation: string | null;
   noted_by_signature: string | null;
@@ -222,15 +226,17 @@ export interface LocationalClearanceData {
   orNumber: string;
   amountPaid: string;
   datePaid: string;
-  dateOfInspection: string;
-  dateOfLcPrepared: string;
+  dateOfInspectionAndLcPrepared: string;
   documentTitle: string;
 }
 
 export interface LocationalClearanceResponse {
-  eligible: boolean;
-  reasons: string[];
+  eligible?: boolean;
+  reasons?: string[];
+  generated?: boolean;
+  generatedAt?: string | null;
   data: LocationalClearanceData;
+  document?: Document;
   message?: string;
 }
 
@@ -270,6 +276,11 @@ export interface Document {
   storey: string;
   mezanine: string | null;
   status?: 'encoding' | 'returned' | 'encoded' | 'inspected' | 'reviewed' | 'approved';
+  or_number?: string | null;
+  amount_paid?: string | number | null;
+  date_paid?: string | null;
+  date_requirements_complied?: string | null;
+  locational_clearance_generated_at?: string | null;
   created_at: string;
   zoning?: { id: number; name: string };
   project_type?: { id: number; name: string };
@@ -543,6 +554,28 @@ export class DocumentService {
   static async updateOic(documentId: number, userId: number) {
     const response = await axiosInstance.put(`/api/documents/${documentId}/oic`, {
       user_id: userId,
+    });
+    return response.data;
+  }
+
+  static async updateLocationalClearancePayment(
+    documentId: number,
+    payload: {
+      orNumber: string;
+      amountPaid: string;
+      datePaid: string;
+      dateRequirementsComplied: string;
+    },
+  ) {
+    const response = await axiosInstance.put<{
+      message: string;
+      document: Document;
+      data: LocationalClearanceData;
+    }>(`/api/documents/${documentId}/locational-clearance/payment`, {
+      orNumber: payload.orNumber.trim() || null,
+      amountPaid: payload.amountPaid.trim() === "" ? null : payload.amountPaid,
+      datePaid: payload.datePaid.trim() || null,
+      dateRequirementsComplied: payload.dateRequirementsComplied.trim() || null,
     });
     return response.data;
   }

@@ -7,6 +7,7 @@ use App\Models\Purok;
 use App\Models\Role;
 use App\Models\User;
 use App\Models\Zoning;
+use App\Support\LocationalClearanceBuilder;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
@@ -113,11 +114,26 @@ it('saves main road and optional additional frontage roads', function () {
         ->and($response->json('report.frontages.0.label'))->toBe('Main Road')
         ->and($response->json('report.frontages.0.name'))->toBe('Coastal Road')
         ->and($response->json('report.frontages.0.frontage'))->toBe('25.5')
+        ->and($response->json('report.frontages.0.standard_rrow'))->toBe('20')
         ->and($response->json('report.frontages.1.label'))->toBe('2nd Road')
         ->and($response->json('report.frontages.1.name'))->toBe('Brgy. Road')
         ->and($response->json('report.road_category'))->toBe('Coastal Road')
         ->and($response->json('report.front_setback'))->toBe('25.5')
         ->and($response->json('report.frontages.0.remarks'))->toBe('Main frontage');
+
+    $document->refresh()->load([
+        'projectType',
+        'specificProjectType',
+        'barangay',
+        'purok',
+        'inspectionReport.inspector',
+        'attachments',
+    ]);
+
+    $clearance = app(LocationalClearanceBuilder::class)->build($document);
+
+    expect($clearance['frontageAtMainRoad'])->toBe('25.5 m')
+        ->and($clearance['standardRoadRightOfWay'])->toBe('20 m');
 });
 
 it('rejects more than four frontage roads', function () {

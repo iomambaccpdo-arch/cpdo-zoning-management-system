@@ -2,8 +2,11 @@
 # Right-click -> Run with PowerShell, or double-click export-sync-package.bat
 
 $ErrorActionPreference = "Stop"
-$ScriptFileDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$commonPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptFileDir "sync-common.ps1"))
+$ScriptFileDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$commonPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptFileDir "..\sync-common.ps1"))
+if (-not (Test-Path -LiteralPath $commonPath)) {
+    throw "Missing sync-common.ps1 at $commonPath"
+}
 . $commonPath
 
 $ScriptsDir = Get-CpdoScriptsRoot -ScriptFileDir $ScriptFileDir

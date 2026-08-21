@@ -132,3 +132,30 @@ it('includes inspection landmark in locational clearance location', function () 
         ->and($data['location'])->toContain('Along Coastal Road')
         ->and($data['location'])->not->toContain('Near City Hall');
 });
+
+it('does not duplicate Purok in locational clearance location or applicant address', function () {
+    $inspector = landmarkTestInspector();
+    $document = landmarkTestDocument($inspector);
+    $document->purok->update(['name' => 'Purok 10']);
+    $document->barangay->update(['name' => 'San Pedro']);
+
+    InspectionReport::create([
+        'document_id' => $document->id,
+        'inspector_id' => $inspector->id,
+        'status' => 'submitted',
+        'submitted_at' => now(),
+        'inspection_date' => now()->toDateString(),
+        'location_details' => 'Purok Purok 10, Brgy. San Pedro, Panabo City',
+        'landmark' => 'Along Coastal Road',
+        'right_over_land' => 'Land Title',
+    ]);
+
+    $document->load(['projectType', 'specificProjectType', 'barangay', 'purok', 'inspectionReport.inspector', 'attachments']);
+
+    $data = app(LocationalClearanceBuilder::class)->build($document);
+
+    expect($data['location'])->toContain('Purok 10, Brgy. San Pedro, Panabo City')
+        ->and($data['location'])->not->toContain('Purok Purok')
+        ->and($data['applicantAddress'])->toContain('Purok 10')
+        ->and($data['applicantAddress'])->not->toContain('Purok Purok');
+});

@@ -80,6 +80,24 @@ class DocumentAuthorization
         return $document->status === DocumentStatus::REVIEWED;
     }
 
+    public static function canManageLocationalClearancePayment(User $user, Document $document): bool
+    {
+        if (self::isEncoder($user)) {
+            return false;
+        }
+
+        if (! $user->hasResourcePermission('Files', 'generate_locational_clearance')
+            && ! $user->hasResourcePermission('Files', 'review_inspection_report')) {
+            return false;
+        }
+
+        return in_array($document->status, [
+            DocumentStatus::INSPECTED,
+            DocumentStatus::REVIEWED,
+            DocumentStatus::APPROVED,
+        ], true);
+    }
+
     public static function canReturnToEncoder(User $user, Document $document): bool
     {
         if (! $user->roles->contains(
